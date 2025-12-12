@@ -1,4 +1,4 @@
-name: Deploy React to S3
+name: Deploy to EC2
 
 on:
   push:
@@ -8,22 +8,21 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - name: Setup Node
-        uses: actions/setup-node@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.7.0
         with:
-          node-version: '18'
-      - run: npm install
-      - run: npm run build
-      - name: Deploy to S3
-        uses: aws-actions/s3-sync@v2
-        with:
-          source-dir: ./dist
-          bucket: my-react-frontend-bucket
-          delete: true
-        env:
-          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
+          ssh-private-key: ${{ secrets.EC2_PRIVATE_KEY }}
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+            cd ${{ secrets.EC2_PATH }} &&
+            git pull &&
+            npm install &&
+            pm2 restart all || pm2 start server.js --name backend
+          "
