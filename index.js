@@ -8,8 +8,10 @@ const { ensureTasksTable } = require("./validators/tasksSchema");
 const { ensureUsersTable } = require("./validators/userSchema");
 const { ensureProjectsTable } = require("./validators/projectsSchema");
 const { ensureTimeEntriesTable } = require("./validators/timeEntriesSchema");
+const { ensureClientsTable } = require("./validators/clientSchema");
 const {seedUsersFromExcel}=require("./seeds/userSeedings");
 const {seedTasksFromExcel}=require("./seeds/taskSeedings");
+const {seedClientsFromExcel}=require("./seeds/clientSeedings");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
@@ -52,11 +54,12 @@ app.post("/api/time-entries", async (req, res) => {
       dept,
       project,
       project_code,
-      location,
+      country,
       remarks,
       date,
       hours = 0,
       minutes = 0,
+      client
     } = req.body;
     console.log(req.body);
     if (!taskId || !date) {
@@ -76,12 +79,12 @@ app.post("/api/time-entries", async (req, res) => {
         email || null,
         project || null,
         project_code || null,
-        location || null,
+        country || null,
         remarks || null,
-        "",
+        client || "",
         date,
         hours,
-        minutes,
+        minutes
       ]
     );
 
@@ -242,7 +245,7 @@ app.delete("/api/time-entries/:id", async (req, res) => {
 app.put("/api/time-entries/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { taskId, hours, minutes, project, location, remarks, entry_date } =
+    const { taskId, hours, minutes, project, country, remarks, entry_date,client } =
       req.body;
     console.log(req.body);
     const result = await pool.query(
@@ -254,11 +257,12 @@ app.put("/api/time-entries/:id", async (req, res) => {
             project_name = $4,
             location = $5,
             remarks = $6,
-            entry_date = $7
-        WHERE id = $8
+            entry_date = $7,
+            client=$8
+        WHERE id = $9
         RETURNING *
         `,
-      [taskId, hours, minutes, project, location, remarks, entry_date, id]
+      [taskId, hours, minutes, project, country, remarks, entry_date,client, id]
     );
 
     if (result.rows.length === 0) {
@@ -545,11 +549,58 @@ app.get("/api/dept", async (req, res) => {
   }
 });
 
+app.post("/api/client", async (req, res) => {
+  try {
+    const { name } = req.body;
+    const result = await pool.query(
+       `
+      INSERT INTO clients (name)
+      VALUES ($1)
+      RETURNING *
+      `,
+      [name]
+     
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(409).json({ error: "Fail to add client" });
+    }
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to add client" });
+  }
+});
+
+app.get("/api/client", async (req, res) => {
+  try {
+    
+    const result = await pool.query(
+      `
+      Select * from clients
+      `
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(409).json({ error: "No client found" });
+    }
+
+    res.status(201).json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch client " });
+  }
+});
+
+
+
 app.post("/projects/seed", async (req, res) => {
   try {
-    // await seedProjectsFromExcel();
-    // await seedUsersFromExcel();
+    await seedProjectsFromExcel();
+    await seedUsersFromExcel();
     await seedTasksFromExcel();
+    await seedClientsFromExcel();
     res.json({ message: "✅ Projects seeded successfully" });
   } catch (err) {
     res.status(500).json({ message: "❌ Seeding failed" });
@@ -562,11 +613,12 @@ app.get("/health", (req, res) => {
 });
 
 Promise.all([
+  ensureProjectsTable(),
   ensureTimeEntriesTable(),
   ensureUsersTable(),
-  ensureProjectsTable(),
   ensureTasksTable(),
   ensureDeptTable(),
+  ensureClientsTable()
 ]).then(() => {
   app.listen(PORT, () => {
     console.log(`✅ API running on http://localhost:${PORT}`);

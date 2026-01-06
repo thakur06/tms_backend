@@ -3,10 +3,10 @@ const path = require("path");
 const pool = require("../db");
 const fs = require("fs");
 
-const FILE_PATH = path.join(__dirname, "../data/tasks.xlsx");
+const FILE_PATH = path.join(__dirname, "../data/clients.xlsx");
 
-async function seedTasksFromExcel() {
-  console.log(`📂 Starting seeding from: ${FILE_PATH}`);
+async function seedClientsFromExcel() {
+  console.log(`📂 Starting client seeding from: ${FILE_PATH}`);
   
   if (!fs.existsSync(FILE_PATH)) {
     console.error(`❌ File not found: ${FILE_PATH}`);
@@ -53,7 +53,7 @@ async function seedTasksFromExcel() {
     foundHeaders.forEach(h => console.log(`   ${h.column}: "${h.header}"`));
     
     // Check for required columns
-    const requiredColumns = ['task_name', 'task_dept'];
+    const requiredColumns = ['name'];
     const missingColumns = requiredColumns.filter(col => !headerMap[col]);
     
     if (missingColumns.length > 0) {
@@ -74,10 +74,10 @@ async function seedTasksFromExcel() {
       rowsInserted: 0,
       rowsUpdated: 0,
       rowsSkipped: 0,
-      duplicatesInFile: new Map(), // task_name -> [row numbers]
+      duplicatesInFile: new Map(), // client_name -> [row numbers]
       missingData: [],
-      insertedTasks: new Set(),
-      updatedTasks: new Set()
+      insertedClients: new Set(),
+      updatedClients: new Set()
     };
 
     console.log("\n📝 Processing data rows...");
@@ -86,49 +86,48 @@ async function seedTasksFromExcel() {
     for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
       const row = worksheet.getRow(rowNumber);
       
-      // Extract values - CORRECTED: use actual column names from headerMap
-      const task_name = row.getCell(headerMap['task_name'])?.value?.toString().trim();
-      const task_dept = row.getCell(headerMap['task_dept'])?.value?.toString().trim();
+      // Extract client name
+      const client_name = row.getCell(headerMap['name'])?.value?.toString().trim();
       
       stats.rowsProcessed++;
 
-      // Check for missing data - CORRECTED condition
-      if (!task_name || !task_dept) {
+      // Check for missing data
+      if (!client_name) {
         stats.rowsSkipped++;
         stats.missingData.push({
           row: rowNumber,
-          task_name: task_name || '(empty)',
-          task_dept: task_dept || '(empty)'
+          name: client_name || '(empty)'
         });
         continue;
       }
 
       // Track duplicates within the file
-      if (!stats.duplicatesInFile.has(task_name)) {
-        stats.duplicatesInFile.set(task_name, []);
+      if (!stats.duplicatesInFile.has(client_name)) {
+        stats.duplicatesInFile.set(client_name, []);
       }
-      stats.duplicatesInFile.get(task_name).push(rowNumber);
+      stats.duplicatesInFile.get(client_name).push(rowNumber);
 
-      // Insert or update row - CORRECTED table name and column references
+      // Insert or update client
       try {
-        // Generate a unique task_id (you can modify this logic as needed)
-        
         const result = await client.query(`
-          INSERT INTO tasks ( task_name, task_dept) 
-          VALUES ($1, $2)
-          RETURNING task_name, (xmax = 0) AS inserted
-        `, [task_name, task_dept]);
+          INSERT INTO clients (name) 
+          VALUES ($1)
+          ON CONFLICT (name) 
+          DO UPDATE SET 
+            name = EXCLUDED.name
+          RETURNING id, (xmax = 0) AS inserted
+        `, [client_name]);
         
         if (result.rows.length > 0) {
           const isInsert = result.rows[0].inserted;
           if (isInsert) {
             stats.rowsInserted++;
-            stats.insertedTasks.add(task_name);
-            console.log(`✅ Row ${rowNumber}: INSERTED "${task_name}" - "${task_dept}"`);
+            stats.insertedClients.add(client_name);
+            console.log(`✅ Row ${rowNumber}: INSERTED client "${client_name}"`);
           } else {
             stats.rowsUpdated++;
-            stats.updatedTasks.add(task_name);
-            console.log(`↩️ Row ${rowNumber}: UPDATED "${task_name}" - "${task_dept}"`);
+            stats.updatedClients.add(client_name);
+            console.log(`↩️ Row ${rowNumber}: UPDATED client "${client_name}"`);
           }
         }
         
@@ -141,11 +140,11 @@ async function seedTasksFromExcel() {
     await client.query("COMMIT");
 
     // Generate summary report
-    generateSummaryReport(stats);
+    generateClientSummaryReport(stats);
 
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("\n❌ Seeding failed with error:");
+    console.error("\n❌ Client seeding failed with error:");
     console.error("   Message:", error.message);
     if (error.detail) console.error("   Detail:", error.detail);
     if (error.hint) console.error("   Hint:", error.hint);
@@ -155,9 +154,9 @@ async function seedTasksFromExcel() {
   }
 }
 
-function generateSummaryReport(stats) {
+function generateClientSummaryReport(stats) {
   console.log("\n" + "=".repeat(60));
-  console.log("📊 TASK SEEDING COMPLETE - SUMMARY REPORT");
+  console.log("📊 CLIENT SEEDING COMPLETE - SUMMARY REPORT");
   console.log("=".repeat(60));
   
   console.log("\n📈 OVERALL STATISTICS:");
@@ -169,54 +168,54 @@ function generateSummaryReport(stats) {
   
   // Find actual duplicates (appear more than once in file)
   const actualDuplicates = Array.from(stats.duplicatesInFile.entries())
-    .filter(([task_name, rows]) => rows.length > 1);
+    .filter(([client_name, rows]) => rows.length > 1);
   
   if (actualDuplicates.length > 0) {
-    console.log("\n⚠️ DUPLICATE TASK NAMES FOUND IN EXCEL FILE:");
-    actualDuplicates.forEach(([task_name, rows]) => {
-      console.log(`   • "${task_name}" appears on rows: ${rows.join(', ')}`);
+    console.log("\n⚠️ DUPLICATE CLIENT NAMES FOUND IN EXCEL FILE:");
+    actualDuplicates.forEach(([client_name, rows]) => {
+      console.log(`   • "${client_name}" appears on rows: ${rows.join(', ')}`);
     });
-    console.log(`   Total duplicate tasks: ${actualDuplicates.length}`);
+    console.log(`   Total duplicate clients: ${actualDuplicates.length}`);
   } else {
-    console.log("\n✅ No duplicate task names found in Excel file");
+    console.log("\n✅ No duplicate client names found in Excel file");
   }
   
   if (stats.missingData.length > 0) {
     console.log("\n📝 ROWS SKIPPED DUE TO MISSING DATA:");
     stats.missingData.slice(0, 10).forEach(row => {
-      console.log(`   • Row ${row.row}: task_name="${row.task_name}", task_dept="${row.task_dept}"`);
+      console.log(`   • Row ${row.row}: client_name="${row.name}"`);
     });
     if (stats.missingData.length > 10) {
       console.log(`   ... and ${stats.missingData.length - 10} more`);
     }
   }
   
-  // Show sample of inserted/updated tasks
-  if (stats.insertedTasks.size > 0) {
-    console.log(`\n✅ New tasks inserted: ${stats.insertedTasks.size}`);
-    const sampleTasks = Array.from(stats.insertedTasks).slice(0, 5);
-    sampleTasks.forEach(task => console.log(`   • ${task}`));
-    if (stats.insertedTasks.size > 5) {
-      console.log(`   ... and ${stats.insertedTasks.size - 5} more`);
+  // Show sample of inserted/updated clients
+  if (stats.insertedClients.size > 0) {
+    console.log(`\n✅ New clients inserted: ${stats.insertedClients.size}`);
+    const sampleClients = Array.from(stats.insertedClients).slice(0, 5);
+    sampleClients.forEach(client => console.log(`   • ${client}`));
+    if (stats.insertedClients.size > 5) {
+      console.log(`   ... and ${stats.insertedClients.size - 5} more`);
     }
   }
   
-  if (stats.updatedTasks.size > 0) {
-    console.log(`\n↩️ Existing tasks updated: ${stats.updatedTasks.size}`);
-    const sampleTasks = Array.from(stats.updatedTasks).slice(0, 5);
-    sampleTasks.forEach(task => console.log(`   • ${task}`));
-    if (stats.updatedTasks.size > 5) {
-      console.log(`   ... and ${stats.updatedTasks.size - 5} more`);
+  if (stats.updatedClients.size > 0) {
+    console.log(`\n↩️ Existing clients updated: ${stats.updatedClients.size}`);
+    const sampleClients = Array.from(stats.updatedClients).slice(0, 5);
+    sampleClients.forEach(client => console.log(`   • ${client}`));
+    if (stats.updatedClients.size > 5) {
+      console.log(`   ... and ${stats.updatedClients.size - 5} more`);
     }
   }
   
   console.log("\n" + "=".repeat(60));
-  console.log("🎉 Task seeding process completed successfully!");
+  console.log("🎉 Client seeding process completed successfully!");
   console.log("=".repeat(60));
 }
 
 // Helper function to just analyze the Excel file without inserting
-async function analyzeExcelFile() {
+async function analyzeClientsExcelFile() {
   console.log("🔍 Analyzing Excel file structure...");
   
   if (!fs.existsSync(FILE_PATH)) {
@@ -244,7 +243,7 @@ async function analyzeExcelFile() {
   }
   
   // Check for duplicates in the file
-  const tasks = new Map();
+  const clients = new Map();
   const headerRow = worksheet.getRow(1);
   const headerMap = {};
   
@@ -253,34 +252,34 @@ async function analyzeExcelFile() {
     if (value) headerMap[value] = colNumber;
   });
   
-  if (!headerMap.task_name) {
-    console.log("\n⚠️ No 'task_name' column found in headers");
+  if (!headerMap.name) {
+    console.log("\n⚠️ No 'name' column found in headers");
     return;
   }
   
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
     const row = worksheet.getRow(rowNumber);
-    const task_name = row.getCell(headerMap.task_name)?.value?.toString().trim();
-    if (task_name) {
-      if (!tasks.has(task_name)) tasks.set(task_name, []);
-      tasks.get(task_name).push(rowNumber);
+    const client_name = row.getCell(headerMap.name)?.value?.toString().trim();
+    if (client_name) {
+      if (!clients.has(client_name)) clients.set(client_name, []);
+      clients.get(client_name).push(rowNumber);
     }
   }
   
-  const duplicates = Array.from(tasks.entries()).filter(([_, rows]) => rows.length > 1);
+  const duplicates = Array.from(clients.entries()).filter(([_, rows]) => rows.length > 1);
   
   if (duplicates.length > 0) {
-    console.log(`\n⚠️ Found ${duplicates.length} duplicate task names in Excel file:`);
-    duplicates.forEach(([task_name, rows]) => {
-      console.log(`   • "${task_name}" appears ${rows.length} times on rows: ${rows.join(', ')}`);
+    console.log(`\n⚠️ Found ${duplicates.length} duplicate client names in Excel file:`);
+    duplicates.forEach(([client_name, rows]) => {
+      console.log(`   • "${client_name}" appears ${rows.length} times on rows: ${rows.join(', ')}`);
     });
   } else {
-    console.log("\n✅ No duplicate task names found in Excel file");
+    console.log("\n✅ No duplicate client names found in Excel file");
   }
 }
 
 // Export both functions with corrected names
 module.exports = { 
-  seedTasksFromExcel, 
-  analyzeExcelFile 
+  seedClientsFromExcel, 
+  analyzeClientsExcelFile 
 };

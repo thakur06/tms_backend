@@ -4,7 +4,7 @@ const ensureTasksTable = async () => {
         await pool.query(`
         CREATE TABLE IF NOT EXISTS tasks (
           task_id SERIAL PRIMARY KEY,
-          task_name TEXT UNIQUE NOT NULL,
+          task_name TEXT NOT NULL,
           task_dept TEXT NOT NULL
         );
       `);
