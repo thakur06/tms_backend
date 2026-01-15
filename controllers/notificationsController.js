@@ -1,0 +1,84 @@
+const pool = require("../db");
+const { sendEmail } = require("../utils/email");
+
+// Helper to get previous week's Mon-Sun
+function getPreviousWeekRange() {
+  const today = new Date();
+  const day = today.getDay(); // 0 (Sun) - 6 (Sat)
+  const diffToMonday = today.getDate() - day + (day === 0 ? -6 : 1);
+  const currentWeekMonday = new Date(today.setDate(diffToMonday));
+  
+  const prevWeekMonday = new Date(currentWeekMonday);
+  prevWeekMonday.setDate(currentWeekMonday.getDate() - 7);
+  
+  const prevWeekSunday = new Date(prevWeekMonday);
+  prevWeekSunday.setDate(prevWeekMonday.getDate() + 6);
+
+  return {
+    start: prevWeekMonday.toISOString().split('T')[0],
+    end: prevWeekSunday.toISOString().split('T')[0]
+  };
+}
+
+// Check last week's hours and notify
+exports.checkWeeklyHours = async (req, res) => {
+  try {
+    const { start, end } = getPreviousWeekRange();
+    
+    // Aggregate hours per user for the previous week
+    // Note: hours + minutes/60
+    const query = `
+      SELECT 
+        u.name, 
+        u.email, 
+        COALESCE(SUM(te.hours + te.minutes::float/60), 0) as total_hours
+      FROM users u
+      LEFT JOIN time_entries te 
+        ON u.email = te.user_email 
+        AND te.entry_date BETWEEN $1 AND $2
+      GROUP BY u.id, u.name, u.email
+    `;
+    
+    const result = await pool.query(query, [start, end]);
+    const lowHourUsers = result.rows.filter(row => row.total_hours < 40);
+    const notificationsSent = [];
+
+    // Send emails
+    for (const user of lowHourUsers) {
+      if (user.email) {
+        try {
+          const appName = process.env.APP_NAME || "TMS";
+          const subject = `${appName} - Low Hours Alert (Previous Week)`;
+          const text = `Hello ${user.name},\n\nYou only logged ${user.total_hours.toFixed(1)} hours last week (${start} to ${end}). The target is 40 hours.\n\nPlease ensure your timesheets are up to date.`;
+          const html = `
+            <div style="font-family: Arial, sans-serif;">
+              <h2>Low Hours Alert</h2>
+              <p>Hello <b>${user.name}</b>,</p>
+              <p>You only logged <b style="color: #ef4444;">${user.total_hours.toFixed(1)} hours</b> last week (${start} to ${end}).</p>
+              <p>The target is 40 hours per week.</p>
+              <p>Please log in and update your timesheet if you missed any entries.</p>
+            </div>
+          `;
+
+          await sendEmail({ to: user.email, subject, text, html });
+          notificationsSent.push({ email: user.email, status: 'sent' });
+        } catch (mailErr) {
+          console.error(`Failed to email ${user.email}`, mailErr);
+          notificationsSent.push({ email: user.email, status: 'failed' });
+        }
+      }
+    }
+
+    res.json({
+      weekRange: { start, end },
+      totalUsersChecked: result.rows.length,
+      lowHourUsersCount: lowHourUsers.length,
+      details: lowHourUsers.map(u => ({ name: u.name, hours: u.total_hours })),
+      notifications: notificationsSent
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to check weekly hours" });
+  }
+};
