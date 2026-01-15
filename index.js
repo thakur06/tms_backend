@@ -23,6 +23,7 @@ const clientRoutes = require("./routes/clientRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const seedRoutes = require("./routes/seedRoutes");
 const notificationRoutes = require("./routes/notificationsRoutes");
+const timesheetApprovalRoutes = require("./routes/timesheetApprovalRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -43,6 +44,7 @@ app.use("/api/client", clientRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/", seedRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/timesheets", timesheetApprovalRoutes);
 
 // Backward compatibility route
 const { getCurrentWeekTotalTime } = require("./controllers/reportController");
