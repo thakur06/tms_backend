@@ -5,7 +5,9 @@ const {
   getDepts
 } = require('../controllers/deptController');
 
-router.post('/', createDept);
-router.get('/', getDepts);
+const { protect } = require('../middlewares/authMiddleware');
+
+router.post('/', protect, createDept);
+router.get('/', protect, getDepts);
 
 module.exports = router;

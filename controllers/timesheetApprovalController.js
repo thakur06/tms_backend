@@ -81,9 +81,11 @@ exports.getTimesheetsForApproval = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details
+    // Get manager details including reports count
     const managerResult = await pool.query(
-      'SELECT id, is_manager FROM users WHERE email = $1',
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE u.email = $1`,
       [userEmail]
     );
 
@@ -93,7 +95,7 @@ exports.getTimesheetsForApproval = async (req, res) => {
 
     const manager = managerResult.rows[0];
 
-    if (!manager.is_manager) {
+    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Manager privileges required." });
     }
 
@@ -136,9 +138,11 @@ exports.approveTimesheet = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details
+    // Get manager details including reports count
     const managerResult = await pool.query(
-      'SELECT id, is_manager FROM users WHERE email = $1',
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE u.email = $1`,
       [userEmail]
     );
 
@@ -148,7 +152,7 @@ exports.approveTimesheet = async (req, res) => {
 
     const manager = managerResult.rows[0];
 
-    if (!manager.is_manager) {
+    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Manager privileges required." });
     }
 
@@ -207,9 +211,11 @@ exports.rejectTimesheet = async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
-    // Get manager details
+    // Get manager details including reports count
     const managerResult = await pool.query(
-      'SELECT id, is_manager FROM users WHERE email = $1',
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE u.email = $1`,
       [userEmail]
     );
 
@@ -219,7 +225,7 @@ exports.rejectTimesheet = async (req, res) => {
 
     const manager = managerResult.rows[0];
 
-    if (!manager.is_manager) {
+    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Manager privileges required." });
     }
 
@@ -313,9 +319,11 @@ exports.getTeamTimesheetHistory = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details
+    // Get manager details including reports count
     const managerResult = await pool.query(
-      'SELECT id, is_manager FROM users WHERE email = $1',
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE u.email = $1`,
       [userEmail]
     );
 
@@ -325,7 +333,7 @@ exports.getTeamTimesheetHistory = async (req, res) => {
 
     const manager = managerResult.rows[0];
 
-    if (!manager.is_manager) {
+    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Manager privileges required." });
     }
 
@@ -376,9 +384,11 @@ exports.getTimesheetDetails = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details
+    // Get manager details including reports count
     const managerResult = await pool.query(
-      'SELECT id, is_manager FROM users WHERE email = $1',
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE u.email = $1`,
       [userEmail]
     );
 

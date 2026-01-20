@@ -15,9 +15,13 @@ exports.login = async (req, res) => {
             });
         }
 
-        // Find user by email
+        // Find user by email and count direct reports
         const result = await pool.query(
-            'SELECT id, name, email, dept, password FROM users WHERE email = $1',
+            `SELECT 
+                u.id, u.name, u.email, u.dept, u.password, u.role,
+                (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count
+             FROM users u 
+             WHERE u.email = $1`,
             [email.toLowerCase().trim()]
         );
 
@@ -35,7 +39,7 @@ exports.login = async (req, res) => {
             // If no password is set, allow login with any password (for initial setup)
             // In production, you might want to require password reset
             const token = jwt.sign(
-                { id: user.id, email: user.email }, 
+                { id: user.id, email: user.email, role: user.role }, 
                 process.env.JWT_SECRET || 'your-secret-key', 
                 { expiresIn: '30d' }
             );
@@ -46,7 +50,9 @@ exports.login = async (req, res) => {
                     id: user.id,
                     name: user.name,
                     email: user.email,
-                    dept: user.dept
+                    dept: user.dept,
+                    role: user.role,
+                    reportsCount: parseInt(user.reports_count) || 0
                 }
             });
         }
@@ -63,7 +69,7 @@ exports.login = async (req, res) => {
 
         // Generate token
         const token = jwt.sign(
-            { id: user.id, email: user.email }, 
+            { id: user.id, email: user.email, role: user.role }, 
             process.env.JWT_SECRET || 'your-secret-key', 
             { expiresIn: '30d' }
         );
@@ -75,7 +81,9 @@ exports.login = async (req, res) => {
                 id: user.id,
                 name: user.name,
                 email: user.email,
-                dept: user.dept
+                dept: user.dept,
+                role: user.role,
+                reportsCount: parseInt(user.reports_count) || 0
             }
         });
     } catch (error) {

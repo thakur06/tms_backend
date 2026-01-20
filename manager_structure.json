@@ -1,0 +1,94 @@
+{
+  "headers": [
+    {
+      "col": 1,
+      "label": "Sr. No."
+    },
+    {
+      "col": 2,
+      "label": "Employee Code"
+    },
+    {
+      "col": 3,
+      "label": "Full name"
+    },
+    {
+      "col": 4,
+      "label": "Reports To"
+    },
+    {
+      "col": 5,
+      "label": "Location"
+    },
+    {
+      "col": 6,
+      "label": "Dept"
+    },
+    {
+      "col": 7,
+      "label": "Email - 10 Oct-25"
+    }
+  ],
+  "sampleRows": [
+    [
+      1,
+      "BGEI0083",
+      "Aakriti Kumari",
+      "Aditiya Verma",
+      "GGN",
+      "Project Controls",
+      {
+        "text": "aakriti.kumari@biogaseng.com",
+        "hyperlink": "mailto:aakriti.kumari@biogaseng.com"
+      }
+    ],
+    [
+      2,
+      "BGEI0067",
+      "Aarti Doshi",
+      "Manoj Kumar",
+      "GGN",
+      "Process",
+      {
+        "text": "adoshi@biogaseng.com",
+        "hyperlink": "mailto:adoshi@biogaseng.com"
+      }
+    ],
+    [
+      3,
+      "BGEI0072",
+      "Abhishek",
+      "Arun Kumar Panicker",
+      "GGN",
+      "Controls",
+      {
+        "text": "abhishek@biogaseng.com",
+        "hyperlink": "mailto:abhishek@biogaseng.com"
+      }
+    ],
+    [
+      4,
+      "BGEI0062",
+      "Aditya Verma",
+      "Tinju Saji Panicker",
+      "GGN",
+      "Project Controls",
+      {
+        "text": "averma@biogaseng.com",
+        "hyperlink": "mailto:averma@biogaseng.com"
+      }
+    ],
+    [
+      5,
+      "BGEI0055",
+      "Adlin Nithish P",
+      "Mayank Joshi/Manoj Kumar",
+      "GGN",
+      "Product Development",
+      {
+        "text": "anithish@biogaseng.com",
+        "hyperlink": "mailto:anithish@biogaseng.com"
+      }
+    ]
+  ]
+}

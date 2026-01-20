@@ -4,8 +4,9 @@ const {
   createClient,
   getClients
 } = require('../controllers/clientController');
+const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
-router.post('/', createClient);
 router.get('/', getClients);
+router.post('/', protect, isAdmin, createClient);
 
 module.exports = router;

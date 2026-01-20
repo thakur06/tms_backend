@@ -9,12 +9,12 @@ const {
   updateManagerStatus,
   updateUser
 } = require('../controllers/userController');
-const { protect } = require('../middlewares/authMiddleware');
+const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
 // User CRUD
-router.post('/', createUser);
-router.get('/', getUsers);
-router.put('/:id', protect, updateUser);
+router.post('/', protect, isAdmin, createUser);
+router.get('/', protect, getUsers);
+router.put('/:id', protect, isAdmin, updateUser);
 
 // Manager operations - static routes MUST come before parameterized routes
 router.get('/managers', protect, getAvailableManagers);

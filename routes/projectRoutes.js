@@ -5,9 +5,10 @@ const {
   createProject,
   deleteProject
 } = require('../controllers/projectController');
+const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
 router.get('/', getProjects);
-router.post('/', createProject);
-router.delete('/:projectCode', deleteProject);
+router.post('/', protect, isAdmin, createProject);
+router.delete('/:projectCode', protect, isAdmin, deleteProject);
 
 module.exports = router;

@@ -5,7 +5,9 @@ const {
   getCurrentWeekTotalTime
 } = require('../controllers/reportController');
 
-router.get('/time-entries', getTimeEntriesReport);
-router.get('/total-time/current-week', getCurrentWeekTotalTime);
+const { protect } = require('../middlewares/authMiddleware');
+
+router.get('/time-entries', protect, getTimeEntriesReport);
+router.get('/total-time/current-week', protect, getCurrentWeekTotalTime);
 
 module.exports = router;
