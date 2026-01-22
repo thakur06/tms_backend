@@ -98,6 +98,7 @@ exports.getTimeEntriesByUser = async (req, res) => {
   try {
     // Get user email from authenticated request
     const userEmail = req.user?.email;
+    const { start, end } = req.query;
     
     if (!userEmail) {
       return res.status(401).json({ error: "User authentication required" });
@@ -115,15 +116,21 @@ exports.getTimeEntriesByUser = async (req, res) => {
 
     const userName = userResult.rows[0].name;
 
-    const result = await pool.query(
-      `
-        SELECT *
-        FROM time_entries
-        WHERE user_name = $1
-        ORDER BY entry_date DESC, created_at DESC
-        `,
-      [userName]
-    );
+    let query = `
+      SELECT *
+      FROM time_entries
+      WHERE user_name = $1
+    `;
+    const params = [userName];
+
+    if (start && end) {
+      params.push(start, end);
+      query += ` AND entry_date BETWEEN $2 AND $3`;
+    }
+
+    query += ` ORDER BY entry_date DESC, created_at DESC`;
+
+    const result = await pool.query(query, params);
 
     res.json(result.rows);
   } catch (err) {

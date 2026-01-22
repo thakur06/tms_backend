@@ -53,7 +53,7 @@ async function seedProjectsFromExcel() {
     foundHeaders.forEach(h => console.log(`   ${h.column}: "${h.header}"`));
     
     // Check for required columns
-    const requiredColumns = ['name', 'code', 'location'];
+    const requiredColumns = ['name', 'location'];
     const missingColumns = requiredColumns.filter(col => !headerMap[col]);
     
     if (missingColumns.length > 0) {
@@ -88,51 +88,55 @@ async function seedProjectsFromExcel() {
       
       // Extract values
       const name = row.getCell(headerMap['name'])?.value?.toString().trim();
-      const code = row.getCell(headerMap['code'])?.value?.toString().trim();
       const location = row.getCell(headerMap['location'])?.value?.toString().trim();
+      const clientName = headerMap['client'] ? row.getCell(headerMap['client'])?.value?.toString().trim() : 'Unknown';
+      const category = headerMap['category'] ? row.getCell(headerMap['category'])?.value?.toString().trim() : 'project';
+
       
       stats.rowsProcessed++;
 
       // Check for missing data
-      if (!name || !code || !location) {
+      if (!name || !location) {
         stats.rowsSkipped++;
         stats.missingData.push({
           row: rowNumber,
           name: name || '(empty)',
-          code: code || '(empty)',
           location: location || '(empty)'
         });
         continue;
       }
 
-      // Track duplicates within the file
-      if (!stats.duplicatesInFile.has(code)) {
-        stats.duplicatesInFile.set(code, []);
-      }
-      stats.duplicatesInFile.get(code).push(rowNumber);
-
       // Insert or update row
       try {
+        // Check if project exists by name (since code is serial/auto-generated or not provided)
+        // We will assume name is unique for now or use name for conflict resolution if code is not provided
+        // However, the original code used 'code' for conflict.
+        // User asked to "remove code since it is serialized"
+        // So we should match on NAME maybe? Or just INSERT and let DB handle unique name?
+        // The projectsSchema says: name TEXT UNIQUE NOT NULL
+        // So we should use ON CONFLICT (name)
+        
         const result = await client.query(`
-          INSERT INTO projects (name, code, location) 
-          VALUES ($1, $2, $3)
-          ON CONFLICT (code) 
+          INSERT INTO projects (name, location, client, category) 
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (name) 
           DO UPDATE SET 
-            name = EXCLUDED.name,
-            location = EXCLUDED.location
+            location = EXCLUDED.location,
+            client = EXCLUDED.client,
+            category = EXCLUDED.category
           RETURNING id, (xmax = 0) AS inserted
-        `, [name, code, location]);
+        `, [name, location, clientName, category]);
         
         if (result.rows.length > 0) {
           const isInsert = result.rows[0].inserted;
           if (isInsert) {
             stats.rowsInserted++;
-            stats.insertedCodes.add(code);
-            console.log(`✅ Row ${rowNumber}: INSERTED "${code}" - "${name}"`);
+            // stats.insertedCodes.add(code); // Code not available
+            console.log(`✅ Row ${rowNumber}: INSERTED "${name}"`);
           } else {
             stats.rowsUpdated++;
-            stats.updatedCodes.add(code);
-            console.log(`↩️ Row ${rowNumber}: UPDATED "${code}" - "${name}"`);
+            // stats.updatedCodes.add(code); // Code not available
+            console.log(`↩️ Row ${rowNumber}: UPDATED "${name}"`);
           }
         }
         

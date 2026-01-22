@@ -58,12 +58,12 @@ app.get("/health", (req, res) => {
 // Initialize database tables and start server
 Promise.all([
   ensureProjectsTable(),
-  ensureTimeEntriesTable(),
-  ensureUsersTable(),
-  ensureTasksTable(),
-  ensureDeptTable(),
-  ensureClientsTable(),
-  ensurePasswordResetOtpTable(),
+  // ensureTimeEntriesTable(),
+  // ensureUsersTable(),
+  // ensureTasksTable(),
+  // ensureDeptTable(),
+  // ensureClientsTable(),
+  // ensurePasswordResetOtpTable(),
 ]).then(() => {
   app.listen(PORT, () => {
     console.log(`✅ API running on http://localhost:${PORT}`);

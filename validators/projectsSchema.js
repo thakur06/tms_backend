@@ -7,8 +7,10 @@ const ensureProjectsTable = async () => {
       CREATE TABLE IF NOT EXISTS projects (
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
-        code TEXT UNIQUE NOT NULL,
+        code SERIAL NOT NULL,
         location TEXT NOT NULL,
+        client TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'project',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
