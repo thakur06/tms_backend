@@ -11,7 +11,7 @@ const ensureTimeEntriesTable = async () => {
         user_dept TEXT,
         user_email TEXT,
         project_name TEXT,
-        project_code TEXT,
+        project_code INTEGER NOT NULL,
         location TEXT,
         remarks TEXT,
         client TEXT,

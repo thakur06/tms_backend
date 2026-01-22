@@ -5,7 +5,7 @@ const ensureTasksTable = async () => {
         CREATE TABLE IF NOT EXISTS tasks (
           task_id SERIAL PRIMARY KEY,
           task_name TEXT NOT NULL,
-          task_dept TEXT NOT NULL
+          task_dept TEXT
         );
       `);
 

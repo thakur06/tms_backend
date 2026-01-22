@@ -53,7 +53,7 @@ async function seedTasksFromExcel() {
     foundHeaders.forEach(h => console.log(`   ${h.column}: "${h.header}"`));
     
     // Check for required columns
-    const requiredColumns = ['task_name', 'task_dept'];
+    const requiredColumns = ['task_name'];
     const missingColumns = requiredColumns.filter(col => !headerMap[col]);
     
     if (missingColumns.length > 0) {
@@ -88,17 +88,15 @@ async function seedTasksFromExcel() {
       
       // Extract values - CORRECTED: use actual column names from headerMap
       const task_name = row.getCell(headerMap['task_name'])?.value?.toString().trim();
-      const task_dept = row.getCell(headerMap['task_dept'])?.value?.toString().trim();
       
       stats.rowsProcessed++;
 
       // Check for missing data - CORRECTED condition
-      if (!task_name || !task_dept) {
+      if (!task_name ) {
         stats.rowsSkipped++;
         stats.missingData.push({
           row: rowNumber,
           task_name: task_name || '(empty)',
-          task_dept: task_dept || '(empty)'
         });
         continue;
       }
@@ -114,21 +112,21 @@ async function seedTasksFromExcel() {
         // Generate a unique task_id (you can modify this logic as needed)
         
         const result = await client.query(`
-          INSERT INTO tasks ( task_name, task_dept) 
-          VALUES ($1, $2)
+          INSERT INTO tasks ( task_name) 
+          VALUES ($1)
           RETURNING task_name, (xmax = 0) AS inserted
-        `, [task_name, task_dept]);
+        `, [task_name]);
         
         if (result.rows.length > 0) {
           const isInsert = result.rows[0].inserted;
           if (isInsert) {
             stats.rowsInserted++;
             stats.insertedTasks.add(task_name);
-            console.log(`✅ Row ${rowNumber}: INSERTED "${task_name}" - "${task_dept}"`);
+            console.log(`✅ Row ${rowNumber}: INSERTED "${task_name}" `);
           } else {
             stats.rowsUpdated++;
             stats.updatedTasks.add(task_name);
-            console.log(`↩️ Row ${rowNumber}: UPDATED "${task_name}" - "${task_dept}"`);
+            console.log(`↩️ Row ${rowNumber}: UPDATED "${task_name}"`);
           }
         }
         
@@ -184,7 +182,7 @@ function generateSummaryReport(stats) {
   if (stats.missingData.length > 0) {
     console.log("\n📝 ROWS SKIPPED DUE TO MISSING DATA:");
     stats.missingData.slice(0, 10).forEach(row => {
-      console.log(`   • Row ${row.row}: task_name="${row.task_name}", task_dept="${row.task_dept}"`);
+      console.log(`   • Row ${row.row}: task_name="${row.task_name}"`);
     });
     if (stats.missingData.length > 10) {
       console.log(`   ... and ${stats.missingData.length - 10} more`);

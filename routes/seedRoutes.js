@@ -8,9 +8,9 @@ const { seedClientsFromExcel } = require("../seeds/clientSeedings");
 
 router.post("/projects/seed", protect, async (req, res) => {
   try {
-    await seedProjectsFromExcel();
+    // await seedProjectsFromExcel();
     // await seedUsersFromExcel();
-    // await seedTasksFromExcel();
+    await seedTasksFromExcel();
     // await seedClientsFromExcel();
     res.json({ message: "✅ Projects seeded successfully" });
   } catch (err) {
