@@ -1,5 +1,5 @@
 const pool = require("../db");
-const { sendEmail } = require("../utils/email");
+const { sendEmail, lowHoursEmailTemplate } = require("../utils/email");
 
 // Helper to get previous week's Mon-Sun
 function getPreviousWeekRange() {
@@ -49,17 +49,15 @@ async function checkAndNotifyLowHours() {
     if (user.email) {
       try {
         const appName = process.env.APP_NAME || "TMS";
-        const subject = `${appName} - Low Hours Alert (Previous Week)`;
-        const text = `Hello ${user.name},\n\nYou only logged ${user.total_hours.toFixed(1)} hours last week (${start} to ${end}). The target is 40 hours.\n\nPlease ensure your timesheets are up to date.`;
-        const html = `
-          <div style="font-family: Arial, sans-serif;">
-            <h2>Low Hours Alert</h2>
-            <p>Hello <b>${user.name}</b>,</p>
-            <p>You only logged <b style="color: #ef4444;">${user.total_hours.toFixed(1)} hours</b> last week (${start} to ${end}).</p>
-            <p>The target is 40 hours per week.</p>
-            <p>Please log in and update your timesheet if you missed any entries.</p>
-          </div>
-        `;
+        
+        // Use unified email template
+        const { subject, text, html } = lowHoursEmailTemplate({
+          appName,
+          name: user.name,
+          hours: user.total_hours,
+          startStr: start,
+          endStr: end
+        });
 
         // Include Manager in CC if available
         const cc = user.manager_email || undefined;
