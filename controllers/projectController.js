@@ -16,18 +16,18 @@ exports.getProjects = async (req, res) => {
   }
 };
 
-    // Create a project
+// Create a project
 exports.createProject = async (req, res) => {
   try {
-    const { name, location, client, category = 'project' } = req.body;
+    const { name, location, client, category = 'project', status = 'Active' } = req.body;
     const result = await pool.query(
       `
-      INSERT INTO projects (name, location, client, category)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO projects (name, location, client, category, status)
+      VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (name) DO NOTHING
       RETURNING *
       `,
-      [name, location, client, category]
+      [name, location, client, category, status]
     );
     res.status(201).json(result.rows);
   } catch (err) {
@@ -40,16 +40,17 @@ exports.createProject = async (req, res) => {
 exports.updateProject = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, location, client, category } = req.body;
+    const { name, location, client, category, status } = req.body;
     
+    // Construct dynamic update or just fixed? Fixed is easier.
     const result = await pool.query(
       `
       UPDATE projects 
-      SET name = $1, location = $2, client = $3, category = $4
-      WHERE id = $5
+      SET name = $1, location = $2, client = $3, category = $4, status = $5
+      WHERE id = $6
       RETURNING *
       `,
-      [name, location, client, category, id]
+      [name, location, client, category, status, id]
     );
 
     if (result.rows.length === 0) {

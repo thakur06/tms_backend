@@ -249,3 +249,69 @@ exports.updateTimeEntry = async (req, res) => {
     res.status(500).json({ error: "Failed to update time entry" });
   }
 };
+// Bulk create/update/delete time entries
+exports.bulkTimeEntry = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { operations } = req.body;
+    const userEmail = req.user?.email;
+    
+    if (!userEmail) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+
+    // Get user details
+    const userResult = await client.query(
+      'SELECT name, email, dept FROM users WHERE email = $1',
+      [userEmail]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const user = userResult.rows[0];
+
+    await client.query('BEGIN');
+
+    const results = [];
+
+    for (const op of operations) {
+      if (op.type === 'create') {
+        const { taskId, project, project_code, country, remarks, date, hours, minutes, client: clientName } = op.data;
+        const res = await client.query(
+          `INSERT INTO time_entries (task_id, user_name, user_dept, user_email, project_name, project_code, location, remarks, client, entry_date, hours, minutes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+          [taskId, user.name, user.dept, user.email, project, project_code, country || 'US', remarks, clientName || '', date, hours || 0, minutes || 0]
+        );
+        results.push({ type: 'create', id: res.rows[0].id });
+      } else if (op.type === 'update') {
+        const { id, taskId, project, project_code, country, remarks, date, hours, minutes, client: clientName } = op.data;
+        // Verify ownership (simplified for bulk)
+        const check = await client.query('SELECT user_email FROM time_entries WHERE id = $1', [id]);
+        if (check.rows.length > 0 && check.rows[0].user_email === userEmail) {
+           await client.query(
+            `UPDATE time_entries SET task_id=$1, project_name=$2, project_code=$3, location=$4, remarks=$5, client=$6, entry_date=$7, hours=$8, minutes=$9 WHERE id=$10`,
+            [taskId, project, project_code, country || 'US', remarks, clientName || '', date, hours || 0, minutes || 0, id]
+          );
+          results.push({ type: 'update', id });
+        }
+      } else if (op.type === 'delete') {
+        const { id } = op.data;
+        const check = await client.query('SELECT user_email FROM time_entries WHERE id = $1', [id]);
+        if (check.rows.length > 0 && check.rows[0].user_email === userEmail) {
+          await client.query('DELETE FROM time_entries WHERE id = $1', [id]);
+          results.push({ type: 'delete', id });
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ message: "Bulk operations completed", results });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error("Bulk op failed", err);
+    res.status(500).json({ error: "Failed to process bulk entries" });
+  } finally {
+    client.release();
+  }
+};
