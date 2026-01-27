@@ -7,7 +7,8 @@ const {
   getAvailableManagers,
   getTeamMembers,
   updateManagerStatus,
-  updateUser
+  updateUser,
+  deleteUser
 } = require('../controllers/userController');
 const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
@@ -15,6 +16,7 @@ const { protect, isAdmin } = require('../middlewares/authMiddleware');
 router.post('/', protect, isAdmin, createUser);
 router.get('/', protect, getUsers);
 router.put('/:id', protect, isAdmin, updateUser);
+router.delete('/:id', protect, isAdmin, require('../controllers/userController').deleteUser);
 
 // Manager operations - static routes MUST come before parameterized routes
 router.get('/managers', protect, getAvailableManagers);

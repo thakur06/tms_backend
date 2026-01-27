@@ -292,3 +292,38 @@ exports.updateUser = async (req, res) => {
     res.status(500).json({ error: "Failed to update user" });
   }
 };
+
+// Delete user
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    // Check if user has reports or is a manager (optional safety check)
+    // For now, we'll assuming standard delete. Using CASCADE on DB constraints would be ideal, 
+    // but if not set up, we might hit foreign key errors. 
+    // Let's attempt delete and catch specific FK error if it happens.
+    
+    const result = await pool.query(
+      'DELETE FROM users WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ message: "User deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    if (err.code === '23503') { // Foreign key violation
+      return res.status(400).json({ 
+        error: "Cannot delete user because they have associated records (reports, tasks, etc.). Please reassign or delete their data first." 
+      });
+    }
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+};
