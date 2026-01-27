@@ -26,7 +26,7 @@ function fromAddress() {
   return process.env.SMTP_FROM || process.env.SMTP_USER;
 }
 
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, cc }) {
   const transporter = getTransporter();
   const from = fromAddress();
 
@@ -36,6 +36,7 @@ async function sendEmail({ to, subject, html, text }) {
     subject,
     text,
     html,
+    cc,
   });
 }
 

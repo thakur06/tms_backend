@@ -55,6 +55,8 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+const initScheduler = require("./scheduler");
+
 // Initialize database tables and start server
 Promise.all([
   ensureProjectsTable(),
@@ -65,6 +67,9 @@ Promise.all([
   ensureClientsTable(),
   ensurePasswordResetOtpTable(),
 ]).then(() => {
+  // Start Scheduler
+  initScheduler();
+
   app.listen(PORT, () => {
     console.log(`✅ API running on http://localhost:${PORT}`);
   });
