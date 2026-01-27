@@ -91,7 +91,6 @@ exports.getTimeEntriesReport = async (req, res) => {
 
       users[user].total_minutes += row.total_minutes;
     });
-    console.log(users);
     // Convert minutes → hours
     const response = Object.values(users).map((user) => ({
       user_name: user.user_name,
