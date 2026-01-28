@@ -40,9 +40,17 @@ exports.submitTimesheetForApproval = async (req, res) => {
       [user.id, weekStartDate, weekEndDate]
     );
 
-    let result;
     if (existingResult.rows.length > 0) {
-      // Update existing submission
+      const currentStatus = existingResult.rows[0].status;
+      
+      // If timesheet is already pending or approved, block resubmission
+      if (currentStatus === 'pending' || currentStatus === 'approved') {
+        return res.status(400).json({ 
+          error: `This timesheet is already ${currentStatus}. You cannot resubmit it unless it is rejected.` 
+        });
+      }
+
+      // Update existing submission (only if it was rejected or somehow else back to editting)
       result = await pool.query(
         `UPDATE timesheet_approvals 
          SET total_hours = $1, submitted_at = CURRENT_TIMESTAMP, status = 'pending',
