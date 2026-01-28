@@ -578,7 +578,7 @@ exports.getTimesheetComplianceReport = async (req, res) => {
                 email: u.email,
                 dept: u.dept
             },
-            status: s ? s.status : (total > 0 ? 'draft' : 'not_submitted'),
+            status: s ? s.status : 'not_submitted',
             submittedAt: s ? s.submitted_at : null,
             rejectionReason: s ? s.rejection_reason : null,
             totalHours: total,
