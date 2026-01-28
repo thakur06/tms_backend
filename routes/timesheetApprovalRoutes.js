@@ -21,6 +21,9 @@ router.get('/:id/details', timesheetApprovalController.getTimesheetDetails);
 // Get team timesheet history (managers only)
 router.get('/team', timesheetApprovalController.getTeamTimesheetHistory);
 
+// Get compliance report (daily summaries + status)
+router.get('/compliance', timesheetApprovalController.getTimesheetComplianceReport);
+
 // Approve timesheet
 router.put('/:id/approve', timesheetApprovalController.approveTimesheet);
 

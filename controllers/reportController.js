@@ -27,18 +27,69 @@ const getCurrentWeekDates = () => {
   return { monday, sunday };
 };
 
+// Helper to build WHERE clause dynamically
+const buildWhereClause = (startDate, endDate, projects, users, locations, depts) => {
+  const params = [startDate, endDate];
+  let query = ` WHERE entry_date BETWEEN $1 AND $2 `;
+  let paramIdx = 3;
+
+  if (projects && projects.length > 0) {
+    query += ` AND project_name = ANY($${paramIdx}) `;
+    params.push(projects);
+    paramIdx++;
+  }
+
+  if (users && users.length > 0) {
+    query += ` AND user_name = ANY($${paramIdx}) `;
+    params.push(users);
+    paramIdx++;
+  }
+
+  if (locations && locations.length > 0) {
+    query += ` AND location = ANY($${paramIdx}) `;
+    params.push(locations);
+    paramIdx++;
+  }
+
+  if (depts && depts.length > 0) {
+    query += ` AND user_dept = ANY($${paramIdx}) `;
+    params.push(depts);
+    paramIdx++;
+  }
+
+  return { query, params };
+};
+
 // Get time entries report
 exports.getTimeEntriesReport = async (req, res) => {
-  const { startDate, endDate } = req.query;
+  const { startDate, endDate, projects, users, locations, depts } = req.query;
+
   if (!startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ message: "startDate and endDate are required" });
+    return res.status(400).json({ message: "startDate and endDate are required" });
   }
 
   try {
-    const result = await pool.query(
-      `
+    // Parse JSON arrays if passed as strings (axios params might need this if not using repeats)
+    // Express query parser usually handles arrays if format is ?projects[]=A&projects[]=B
+    // But let's ensure we handle comma-separated strings if that's how frontend sends it, 
+    // or just assume direct arrays if standard qs is used. 
+    // For safety, let's normalize to arrays if they are strings.
+    const parseArray = (val) => {
+        if (!val) return [];
+        if (Array.isArray(val)) return val;
+        return [val]; // Single value
+    };
+
+    const projectArr = parseArray(projects);
+    const userArr = parseArray(users);
+    const locationArr = parseArray(locations);
+    const deptArr = parseArray(depts);
+
+    const { query: whereClause, params } = buildWhereClause(
+        startDate, endDate, projectArr, userArr, locationArr, deptArr
+    );
+
+    const sql = `
         SELECT 
           user_name,
           user_dept,
@@ -54,21 +105,21 @@ exports.getTimeEntriesReport = async (req, res) => {
           minutes,
           (hours * 60 + minutes) AS total_minutes
         FROM time_entries
-        WHERE entry_date BETWEEN $1 AND $2
+        ${whereClause}
         ORDER BY user_name, entry_date ASC
-        `,
-      [startDate, endDate]
-    );
+    `;
+
+    const result = await pool.query(sql, params);
 
     // ---- Group by user and calculate totals ----
-    const users = {};
+    const usersData = {};
 
     result.rows.forEach((row) => {
       const user = row.user_name;
       const dept = row.user_dept;
       const email = row.user_email;
-      if (!users[user]) {
-        users[user] = {
+      if (!usersData[user]) {
+        usersData[user] = {
           user_name: user,
           user_dept: dept,
           user_email: email,
@@ -77,7 +128,7 @@ exports.getTimeEntriesReport = async (req, res) => {
         };
       }
 
-      users[user].entries.push({
+      usersData[user].entries.push({
         date: row.entry_date,
         task_id: row.task_id,
         project: row.project_name,
@@ -89,10 +140,10 @@ exports.getTimeEntriesReport = async (req, res) => {
         client: row.client,
       });
 
-      users[user].total_minutes += row.total_minutes;
+      usersData[user].total_minutes += row.total_minutes;
     });
-    // Convert minutes → hours
-    const response = Object.values(users).map((user) => ({
+
+    const response = Object.values(usersData).map((user) => ({
       user_name: user.user_name,
       user_dept: user.user_dept,
       user_email: user.user_email,
@@ -110,6 +161,152 @@ exports.getTimeEntriesReport = async (req, res) => {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
+};
+
+const ExcelJS = require('exceljs');
+
+
+exports.exportTimeEntriesExcel = async (req, res) => {
+    const { startDate, endDate, projects, users, locations, depts } = req.query;
+
+    if (!startDate || !endDate) {
+        return res.status(400).json({ message: "startDate and endDate are required" });
+    }
+
+    try {
+        const parseArray = (val) => {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            return [val];
+        };
+
+        const projectArr = parseArray(projects);
+        const userArr = parseArray(users);
+        const locationArr = parseArray(locations);
+        const deptArr = parseArray(depts);
+
+        const { query: whereClause, params } = buildWhereClause(
+            startDate, endDate, projectArr, userArr, locationArr, deptArr
+        );
+
+        const sql = `
+            SELECT 
+              entry_date,
+              user_name,
+              user_dept,
+              user_email,
+              project_name,
+              project_code,
+              task_id,
+              hours,
+              minutes,
+              remarks,
+              location,
+              client
+            FROM time_entries
+            ${whereClause}
+            ORDER BY user_name ASC, entry_date ASC
+        `;
+
+        const result = await pool.query(sql, params);
+
+        // Process data for Summary
+        const userSummary = {};
+        result.rows.forEach(row => {
+            if (!userSummary[row.user_name]) {
+                userSummary[row.user_name] = {
+                    name: row.user_name,
+                    email: row.user_email,
+                    dept: row.user_dept,
+                    entries: 0,
+                    totalMinutes: 0
+                };
+            }
+            userSummary[row.user_name].entries++;
+            userSummary[row.user_name].totalMinutes += (row.hours * 60) + row.minutes;
+        });
+
+        // Create Workbook
+        const workbook = new ExcelJS.Workbook();
+        
+        // --- SUMMARY SHEET ---
+        const summarySheet = workbook.addWorksheet('Summary');
+        summarySheet.columns = [
+            { header: 'User', key: 'name', width: 25 },
+            { header: 'Email', key: 'email', width: 30 },
+            { header: 'Department', key: 'dept', width: 20 },
+            { header: 'Total Entries', key: 'entries', width: 15 },
+            { header: 'Total Hours', key: 'totalHours', width: 15 },
+        ];
+        
+        summarySheet.getRow(1).font = { bold: true };
+        
+        Object.values(userSummary).forEach(u => {
+            const h = Math.floor(u.totalMinutes / 60);
+            const m = u.totalMinutes % 60;
+            summarySheet.addRow({
+                name: u.name,
+                email: u.email,
+                dept: u.dept,
+                entries: u.entries,
+                totalHours: `${h}h ${m}m`
+            });
+        });
+
+        // --- DETAILED SHEET ---
+        const worksheet = workbook.addWorksheet('Detailed Entries');
+
+        // Columns matching TimeReport.jsx style roughly
+        worksheet.columns = [
+            { header: 'User', key: 'user', width: 20 },
+            { header: 'Email', key: 'email', width: 25 },
+            { header: 'Department', key: 'dept', width: 15 },
+            { header: 'Date', key: 'date', width: 15 },
+            { header: 'Task ID', key: 'task', width: 20 },
+            { header: 'Project', key: 'project', width: 25 },
+            { header: 'Hours', key: 'hours', width: 10 },
+            { header: 'Minutes', key: 'minutes', width: 10 },
+            { header: 'Location', key: 'location', width: 20 },
+            { header: 'Remarks', key: 'remarks', width: 30 },
+            { header: 'Client', key: 'client', width: 20 },
+        ];
+
+        // Style Header
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFEFF6FF' } // Light blueish
+        };
+
+        // Add Data
+        result.rows.forEach(row => {
+            worksheet.addRow({
+                user: row.user_name,
+                email: row.user_email,
+                dept: row.user_dept,
+                date: new Date(row.entry_date).toLocaleDateString(),
+                task: row.task_id,
+                project: row.project_name,
+                hours: row.hours,
+                minutes: row.minutes,
+                location: row.location,
+                remarks: row.remarks,
+                client: row.client
+            });
+        });
+
+        // Response Headers
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=TimeReport_${startDate}_to_${endDate}.xlsx`);
+
+        await workbook.xlsx.write(res);
+        res.end();
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Failed to generate Excel report" });
+    }
 };
 
 // Get total time for current week

@@ -72,7 +72,7 @@ exports.submitTimesheetForApproval = async (req, res) => {
   }
 };
 
-// Get timesheets pending approval for manager
+// Get timesheets pending approval for manager or admin
 exports.getTimesheetsForApproval = async (req, res) => {
   try {
     const userEmail = req.user?.email;
@@ -81,27 +81,28 @@ exports.getTimesheetsForApproval = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details including reports count
-    const managerResult = await pool.query(
-      `SELECT u.id, u.role, 
+    // Get requester details
+    const requesterResult = await pool.query(
+      `SELECT id, role, 
        (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
-       FROM users u WHERE u.email = $1`,
+       FROM users u WHERE email = $1`,
       [userEmail]
     );
 
-    if (managerResult.rows.length === 0) {
+    if (requesterResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const manager = managerResult.rows[0];
+    const requester = requesterResult.rows[0];
+    const isAdmin = requester.role === 'admin';
+    const isManager = parseInt(requester.reports_count) > 0;
 
-    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
-      return res.status(403).json({ error: "Access denied. Manager privileges required." });
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({ error: "Access denied. Manager or Admin privileges required." });
     }
 
-    // Get all timesheets from team members
-    const result = await pool.query(
-      `SELECT 
+    let query = `
+      SELECT 
         ta.id,
         ta.user_id,
         ta.week_start_date,
@@ -113,13 +114,26 @@ exports.getTimesheetsForApproval = async (req, res) => {
         ta.rejection_reason,
         u.name as user_name,
         u.email as user_email,
-        u.dept as user_dept
-       FROM timesheet_approvals ta
-       JOIN users u ON ta.user_id = u.id
-       WHERE u.reporting_manager_id = $1
-       ORDER BY ta.submitted_at DESC`,
-      [manager.id]
-    );
+        u.dept as user_dept,
+        u.reporting_manager_id,
+        m.name as manager_name
+      FROM timesheet_approvals ta
+      JOIN users u ON ta.user_id = u.id
+      LEFT JOIN users m ON u.reporting_manager_id = m.id
+    `;
+
+    const params = [];
+
+    // If Admin, see ALL (or filter by status if needed, but 'pending' is default context often)
+    // If Manager (and not Admin), see only direct reports
+    if (!isAdmin) {
+      query += ` WHERE u.reporting_manager_id = $1`;
+      params.push(requester.id);
+    }
+
+    query += ` ORDER BY ta.submitted_at DESC`;
+
+    const result = await pool.query(query, params);
 
     res.status(200).json(result.rows);
   } catch (err) {
@@ -138,25 +152,19 @@ exports.approveTimesheet = async (req, res) => {
       return res.status(401).json({ error: "User authentication required" });
     }
 
-    // Get manager details including reports count
-    const managerResult = await pool.query(
-      `SELECT u.id, u.role, 
-       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
-       FROM users u WHERE u.email = $1`,
+    const requesterResult = await pool.query(
+      `SELECT id, role FROM users WHERE email = $1`,
       [userEmail]
     );
 
-    if (managerResult.rows.length === 0) {
+    if (requesterResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const manager = managerResult.rows[0];
+    const requester = requesterResult.rows[0];
+    const isAdmin = requester.role === 'admin';
 
-    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
-      return res.status(403).json({ error: "Access denied. Manager privileges required." });
-    }
-
-    // Verify the timesheet belongs to a team member
+    // Verify the timesheet exists and get ownership info
     const timesheetResult = await pool.query(
       `SELECT ta.*, u.reporting_manager_id 
        FROM timesheet_approvals ta
@@ -171,7 +179,8 @@ exports.approveTimesheet = async (req, res) => {
 
     const timesheet = timesheetResult.rows[0];
 
-    if (timesheet.reporting_manager_id !== manager.id) {
+    // Check permissions: Must be Admin OR Direct Manager
+    if (!isAdmin && timesheet.reporting_manager_id !== requester.id) {
       return res.status(403).json({ 
         error: "You can only approve timesheets for your direct reports" 
       });
@@ -183,7 +192,7 @@ exports.approveTimesheet = async (req, res) => {
        SET status = 'approved', approved_by = $1, approved_at = CURRENT_TIMESTAMP
        WHERE id = $2
        RETURNING *`,
-      [manager.id, id]
+      [requester.id, id]
     );
 
     res.status(200).json({
@@ -211,25 +220,19 @@ exports.rejectTimesheet = async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
-    // Get manager details including reports count
-    const managerResult = await pool.query(
-      `SELECT u.id, u.role, 
-       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
-       FROM users u WHERE u.email = $1`,
+    const requesterResult = await pool.query(
+      `SELECT id, role FROM users WHERE email = $1`,
       [userEmail]
     );
 
-    if (managerResult.rows.length === 0) {
+    if (requesterResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const manager = managerResult.rows[0];
+    const requester = requesterResult.rows[0];
+    const isAdmin = requester.role === 'admin';
 
-    if (parseInt(manager.reports_count) === 0 && manager.role !== 'admin') {
-      return res.status(403).json({ error: "Access denied. Manager privileges required." });
-    }
-
-    // Verify the timesheet belongs to a team member
+    // Verify the timesheet exists and get ownership info
     const timesheetResult = await pool.query(
       `SELECT ta.*, u.reporting_manager_id 
        FROM timesheet_approvals ta
@@ -244,7 +247,8 @@ exports.rejectTimesheet = async (req, res) => {
 
     const timesheet = timesheetResult.rows[0];
 
-    if (timesheet.reporting_manager_id !== manager.id) {
+    // Check permissions: Must be Admin OR Direct Manager
+    if (!isAdmin && timesheet.reporting_manager_id !== requester.id) {
       return res.status(403).json({ 
         error: "You can only reject timesheets for your direct reports" 
       });
@@ -256,7 +260,7 @@ exports.rejectTimesheet = async (req, res) => {
        SET status = 'rejected', approved_by = $1, approved_at = CURRENT_TIMESTAMP, rejection_reason = $2
        WHERE id = $3
        RETURNING *`,
-      [manager.id, reason, id]
+      [requester.id, reason, id]
     );
 
     res.status(200).json({
@@ -398,9 +402,9 @@ exports.getTimesheetDetails = async (req, res) => {
 
     const manager = managerResult.rows[0];
 
-    // Get timesheet info to verify access
+    // Get timesheet info with user name
     const timesheetResult = await pool.query(
-      `SELECT ta.*, u.email as employee_email, u.reporting_manager_id
+      `SELECT ta.*, u.name as user_name, u.email as employee_email, u.reporting_manager_id
        FROM timesheet_approvals ta
        JOIN users u ON ta.user_id = u.id
        WHERE ta.id = $1`,
@@ -416,18 +420,23 @@ exports.getTimesheetDetails = async (req, res) => {
     // Check if manager is authorized (must be the reporting manager or the user themselves)
     const isOwner = timesheet.employee_email === userEmail;
     const isManager = timesheet.reporting_manager_id === manager.id;
+    const isAdmin = manager.role === 'admin';
 
-    if (!isOwner && !isManager) {
+    if (!isOwner && !isManager && !isAdmin) {
       return res.status(403).json({ 
         error: "Access denied. You can only view details for your own timesheets or your direct reports." 
       });
     }
 
-    // Fetch detailed time entries
+    // Fetch detailed time entries with task name (handles both numeric IDs and raw names in te.task_id)
     const entriesResult = await pool.query(
-      `SELECT * FROM time_entries 
-       WHERE user_email = $1 AND entry_date >= $2 AND entry_date <= $3
-       ORDER BY entry_date ASC, created_at ASC`,
+      `SELECT te.*, tk.task_name 
+       FROM time_entries te
+       LEFT JOIN tasks tk ON 
+         (CASE WHEN te.task_id ~ '^[0-9]+$' THEN te.task_id::integer = tk.task_id ELSE FALSE END)
+         OR (te.task_id = tk.task_name)
+       WHERE te.user_email = $1 AND te.entry_date >= $2 AND te.entry_date <= $3
+       ORDER BY te.entry_date ASC, te.created_at ASC`,
       [timesheet.employee_email, timesheet.week_start_date, timesheet.week_end_date]
     );
 
@@ -438,6 +447,143 @@ exports.getTimesheetDetails = async (req, res) => {
   } catch (err) {
     console.error("Get timesheet details error:", err);
     res.status(500).json({ error: "Failed to fetch timesheet details" });
+  }
+};
+
+// Get timesheet compliance report (Daily summaries + Status)
+exports.getTimesheetComplianceReport = async (req, res) => {
+  try {
+    const userEmail = req.user?.email;
+    const { startDate, endDate, scope } = req.query; // Expects YYYY-MM-DD
+    
+    if (!startDate || !endDate) {
+        return res.status(400).json({ error: "startDate and endDate are required" });
+    }
+
+    if (!userEmail) {
+      return res.status(401).json({ error: "User authentication required" });
+    }
+
+    // Get requester details
+    const requesterResult = await pool.query(
+      `SELECT u.id, u.role, 
+       (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count 
+       FROM users u WHERE email = $1`,
+      [userEmail]
+    );
+
+    if (requesterResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const requester = requesterResult.rows[0];
+    const isAdmin = requester.role === 'admin';
+    const isManager = parseInt(requester.reports_count) > 0;
+
+    if (!isAdmin && !isManager) {
+      return res.status(403).json({ error: "Access denied. Manager or Admin privileges required." });
+    }
+
+    // Base query to get relevant users
+    let usersQuery = `SELECT id, name, email, dept, reporting_manager_id FROM users WHERE role != 'admin'`; 
+    const queryParams = [];
+    
+    // Filter logic:
+    // 1. If not admin, strictly show only direct reports
+    // 2. If admin and scope=team, show only direct reports
+    // 3. Otherwise (admin and no scope=team), show everyone
+    if (!isAdmin || scope === 'team') {
+        usersQuery += ` AND reporting_manager_id = $1`;
+        queryParams.push(requester.id);
+    } 
+    // If Admin, sees all (no filter added)
+
+    const usersResult = await pool.query(usersQuery, queryParams);
+    const users = usersResult.rows;
+
+    if (users.length === 0) {
+        return res.status(200).json([]);
+    }
+
+    // Now for each user, fetch their timesheet status AND daily totals for the range
+    // We can do this with a complex join or map over users. 
+    // For performance with large user base, a single efficient query is better, but iteration is safer logic-wise for now.
+    // Let's try a single query approach using the user IDs.
+
+    const userIds = users.map(u => u.id);
+    
+    // 1. Get Timesheet Statuses for this week
+    const statusQuery = `
+        SELECT user_id, status, total_hours, submitted_at, id as timesheet_id, rejection_reason
+        FROM timesheet_approvals 
+        WHERE user_id = ANY($1) 
+        AND week_start_date = $2 
+        AND week_end_date = $3
+    `;
+    const statusResult = await pool.query(statusQuery, [userIds, startDate, endDate]);
+    const statusMap = {};
+    statusResult.rows.forEach(r => statusMap[r.user_id] = r);
+
+    // 2. Get Daily Totals from time_entries
+    const userEmails = users.map(u => u.email);
+    const entriesQuery = `
+        SELECT user_email, entry_date, SUM(hours) as hours, SUM(minutes) as minutes
+        FROM time_entries
+        WHERE user_email = ANY($1) AND entry_date >= $2 AND entry_date <= $3
+        GROUP BY user_email, entry_date
+    `;
+    const entriesResult = await pool.query(entriesQuery, [userEmails, startDate, endDate]);
+    
+    // Aggregation
+    const entriesMap = {};
+    entriesResult.rows.forEach(r => {
+        // Map back to user ID for consistency with status map
+        // We need to find the user ID corresponding to this email
+        const user = users.find(u => u.email === r.user_email);
+        if (user) {
+            const k = `${user.id}-${new Date(r.entry_date).toISOString().split('T')[0]}`;
+            if (!entriesMap[k]) entriesMap[k] = 0;
+            entriesMap[k] += (parseFloat(r.hours) || 0) + ((parseFloat(r.minutes) || 0) / 60);
+        }
+    });
+
+    // 3. Assemble Report
+    const report = users.map(u => {
+        const s = statusMap[u.id];
+        const dailyHours = {};
+        let total = 0;
+        
+        // Loop through requested date range (7 days)
+        const d = new Date(startDate);
+        for(let i=0; i<7; i++) {
+            const dateStr = d.toISOString().split('T')[0];
+            const val = entriesMap[`${u.id}-${dateStr}`] || 0;
+            dailyHours[dateStr] = val;
+            total += val;
+            d.setDate(d.getDate() + 1);
+        }
+
+        return {
+            user: {
+                id: u.id,
+                name: u.name,
+                email: u.email,
+                dept: u.dept
+            },
+            status: s ? s.status : (total > 0 ? 'draft' : 'not_submitted'),
+            submittedAt: s ? s.submitted_at : null,
+            rejectionReason: s ? s.rejection_reason : null,
+            totalHours: total,
+            daily: dailyHours, // Frontend expects 'daily'
+            timesheetId: s ? s.timesheet_id : null
+        };
+    });
+
+    res.json(report);
+
+  } catch (err) {
+    console.error("Compliance report error:", err);
+    res.status(500).json({ error: "Failed to generate compliance report" });
   }
 };
 
