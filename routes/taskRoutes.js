@@ -8,7 +8,7 @@ const {
 const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
 router.post('/', protect, isAdmin, createTask);
-router.get('/', getTasks);
+router.get('/', protect, getTasks);
 router.delete('/:taskId', protect, isAdmin, deleteTask);
 
 module.exports = router;

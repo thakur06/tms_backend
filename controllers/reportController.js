@@ -76,8 +76,12 @@ exports.getTimeEntriesReport = async (req, res) => {
     // For safety, let's normalize to arrays if they are strings.
     const parseArray = (val) => {
         if (!val) return [];
-        if (Array.isArray(val)) return val;
-        return [val]; // Single value
+        if (Array.isArray(val)) return val.filter(Boolean);
+        if (typeof val === 'string') {
+            // Handle comma separated strings (e.g. from some serializers) or single values
+            return val.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return [val]; // Single value non-string
     };
 
     const projectArr = parseArray(projects);
@@ -228,72 +232,179 @@ exports.exportTimeEntriesExcel = async (req, res) => {
 
         // Create Workbook
         const workbook = new ExcelJS.Workbook();
-        
-        // --- SUMMARY SHEET ---
-        const summarySheet = workbook.addWorksheet('Summary');
-        summarySheet.columns = [
-            { header: 'User', key: 'name', width: 25 },
-            { header: 'Email', key: 'email', width: 30 },
-            { header: 'Department', key: 'dept', width: 20 },
-            { header: 'Total Entries', key: 'entries', width: 15 },
-            { header: 'Total Hours', key: 'totalHours', width: 15 },
+        const sheet = workbook.addWorksheet('Time Report');
+
+        // Column widths
+        sheet.columns = [
+            { width: 25 }, { width: 30 }, { width: 40 }, { width: 15 },
+            { width: 50 }, { width: 50 }, { width: 20 }, { width: 15 },
+            { width: 20 }, { width: 40 }, { width: 30 }
         ];
-        
-        summarySheet.getRow(1).font = { bold: true };
-        
-        Object.values(userSummary).forEach(u => {
+
+        // --- TITLE ---
+        const titleRow = sheet.addRow(["TIME TRACKING REPORT"]);
+        titleRow.font = { size: 22, bold: true, color: { argb: '1E40AF' } };
+        titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
+        titleRow.height = 45;
+        sheet.mergeCells('A1:K1');
+
+        sheet.addRow([]);
+        const dateRangeRow = sheet.addRow(["Date Range:", `${startDate} to ${endDate}`]);
+        dateRangeRow.font = { bold: true, size: 12 };
+        dateRangeRow.height = 30;
+
+        sheet.addRow([]);
+
+        // --- USER SUMMARY SECTION ---
+        const summaryTitleRow = sheet.addRow(["USER SUMMARY"]);
+        summaryTitleRow.font = { bold: true, size: 16, color: { argb: '065F46' } };
+        summaryTitleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D1FAE5' } };
+        summaryTitleRow.alignment = { horizontal: 'center', vertical: 'middle' };
+        summaryTitleRow.height = 38;
+        sheet.mergeCells('A' + summaryTitleRow.number + ':I' + summaryTitleRow.number);
+
+        sheet.addRow([]);
+        const summaryHeaders = sheet.addRow([
+            "Sr. No.", "User", "Email", "Department", "Total Entries", "Total Hours", "Total Minutes", "Total Time", "Avg. Hours/Day"
+        ]);
+        summaryHeaders.eachCell(cell => {
+            cell.font = { bold: true, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E0F2FE' } };
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        summaryHeaders.height = 32;
+
+        const reportStartDate = new Date(startDate);
+        const reportEndDate = new Date(endDate);
+        const daysDiff = Math.ceil((reportEndDate - reportStartDate) / (1000 * 60 * 60 * 24)) + 1;
+
+        let grandTotalEntries = 0;
+        let grandTotalMinutes = 0;
+
+        const sortedUsers = Object.values(userSummary).sort((a, b) => a.name.localeCompare(b.name));
+
+        sortedUsers.forEach((u, index) => {
+            const avgHoursPerDay = ((u.totalMinutes / 60) / daysDiff).toFixed(2);
             const h = Math.floor(u.totalMinutes / 60);
             const m = u.totalMinutes % 60;
-            summarySheet.addRow({
-                name: u.name,
-                email: u.email,
-                dept: u.dept,
-                entries: u.entries,
-                totalHours: `${h}h ${m}m`
+
+            const row = sheet.addRow([
+                index + 1,
+                u.name,
+                u.email || "N/A",
+                u.dept || "N/A",
+                u.entries,
+                h,
+                m,
+                `${h}h ${m}m`,
+                avgHoursPerDay
+            ]);
+
+            row.eachCell(cell => {
+                cell.border = { top: { style: 'thin', color: { argb: 'E2E8F0' } }, left: { style: 'thin', color: { argb: 'E2E8F0' } }, bottom: { style: 'thin', color: { argb: 'E2E8F0' } }, right: { style: 'thin', color: { argb: 'E2E8F0' } } };
+                cell.alignment = { vertical: 'middle' };
             });
+
+            grandTotalEntries += u.entries;
+            grandTotalMinutes += u.totalMinutes;
         });
 
-        // --- DETAILED SHEET ---
-        const worksheet = workbook.addWorksheet('Detailed Entries');
+        const finalGrandHours = Math.floor(grandTotalMinutes / 60);
+        const finalGrandMinutes = grandTotalMinutes % 60;
 
-        // Columns matching TimeReport.jsx style roughly
-        worksheet.columns = [
-            { header: 'User', key: 'user', width: 20 },
-            { header: 'Email', key: 'email', width: 25 },
-            { header: 'Department', key: 'dept', width: 15 },
-            { header: 'Date', key: 'date', width: 15 },
-            { header: 'Task ID', key: 'task', width: 20 },
-            { header: 'Project', key: 'project', width: 25 },
-            { header: 'Hours', key: 'hours', width: 10 },
-            { header: 'Minutes', key: 'minutes', width: 10 },
-            { header: 'Location', key: 'location', width: 20 },
-            { header: 'Remarks', key: 'remarks', width: 30 },
-            { header: 'Client', key: 'client', width: 20 },
-        ];
+        const totalRow = sheet.addRow([
+            "TOTAL",
+            `${sortedUsers.length} Users`,
+            "", "",
+            grandTotalEntries,
+            finalGrandHours,
+            finalGrandMinutes,
+            `${finalGrandHours}h ${finalGrandMinutes}m`,
+            ""
+        ]);
 
-        // Style Header
-        worksheet.getRow(1).font = { bold: true };
-        worksheet.getRow(1).fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFEFF6FF' } // Light blueish
-        };
+        totalRow.eachCell(cell => {
+            cell.font = { bold: true };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EFF6FF' } };
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+        });
+        sheet.mergeCells(`A${totalRow.number}:D${totalRow.number}`);
 
-        // Add Data
+        sheet.addRow([]);
+        sheet.addRow([]);
+
+        // --- DETAILED ENTRIES SECTION ---
+        const detailHeaderTitleRow = sheet.addRow(["DETAILED TIME ENTRIES BY USER"]);
+        detailHeaderTitleRow.font = { bold: true, size: 16, color: { argb: '7C3AED' } };
+        detailHeaderTitleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F3E8FF' } };
+        detailHeaderTitleRow.alignment = { horizontal: 'center', vertical: 'middle' };
+        detailHeaderTitleRow.height = 38;
+        sheet.mergeCells('A' + detailHeaderTitleRow.number + ':K' + detailHeaderTitleRow.number);
+
+        sheet.addRow([]);
+        const detailHeaders = sheet.addRow([
+            "User", "Email", "Department", "Date", "Task ID", "Project",
+            "Hours", "Minutes", "Location", "Remarks", "Client"
+        ]);
+        detailHeaders.eachCell(cell => {
+            cell.font = { bold: true, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EFF6FF' } };
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        detailHeaders.height = 32;
+
+        // Group rows by user for detailed section
+        const usersDetailedData = {};
         result.rows.forEach(row => {
-            worksheet.addRow({
-                user: row.user_name,
-                email: row.user_email,
-                dept: row.user_dept,
-                date: new Date(row.entry_date).toLocaleDateString(),
-                task: row.task_id,
-                project: row.project_name,
-                hours: row.hours,
-                minutes: row.minutes,
-                location: row.location,
-                remarks: row.remarks,
-                client: row.client
+            if (!usersDetailedData[row.user_name]) {
+                usersDetailedData[row.user_name] = {
+                    name: row.user_name,
+                    email: row.user_email,
+                    dept: row.user_dept,
+                    entries: []
+                };
+            }
+            usersDetailedData[row.user_name].entries.push(row);
+        });
+
+        Object.values(usersDetailedData).sort((a, b) => a.name.localeCompare(b.name)).forEach((userData, userIndex) => {
+            const h = Math.floor(userData.entries.reduce((acc, curr) => acc + (curr.hours * 60) + curr.minutes, 0) / 60);
+            const m = userData.entries.reduce((acc, curr) => acc + (curr.hours * 60) + curr.minutes, 0) % 60;
+            
+            const userSeparatorRow = sheet.addRow([
+                `USER: ${userData.name.toUpperCase()}`,
+                userData.email || "N/A",
+                userData.dept || "N/A",
+                `Entries: ${userData.entries.length}`,
+                `Total: ${h}h ${m}m`,
+                "", "", "", "", "", ""
+            ]);
+
+            userSeparatorRow.eachCell((cell) => {
+                cell.font = { bold: true, size: 12, color: { argb: '1E40AF' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: userIndex % 2 === 0 ? { argb: 'E0F2FE' } : { argb: 'DBEAFE' } };
+                cell.alignment = { vertical: 'middle' };
             });
+            userSeparatorRow.height = 36;
+            sheet.mergeCells(`A${userSeparatorRow.number}:C${userSeparatorRow.number}`);
+            sheet.mergeCells(`D${userSeparatorRow.number}:E${userSeparatorRow.number}`);
+
+            userData.entries.forEach((entry, entryIndex) => {
+                const row = sheet.addRow([
+                    entry.user_name, entry.user_email || "-", entry.user_dept || "-",
+                    new Date(entry.entry_date).toLocaleDateString(), entry.task_id || "-", entry.project_name || "-",
+                    entry.hours, entry.minutes, entry.location || "-", entry.remarks || "-", entry.client || "-"
+                ]);
+                row.eachCell((cell, colNumber) => {
+                    const rowColor = entryIndex % 2 === 0 ? 'FFFFFF' : 'F8FAFC';
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowColor } };
+                    cell.border = { left: { style: 'thin', color: { argb: 'E2E8F0' } }, right: { style: 'thin', color: { argb: 'E2E8F0' } }, bottom: { style: 'thin', color: { argb: 'E2E8F0' } } };
+                    if (colNumber === 7 || colNumber === 8) cell.alignment = { vertical: 'middle', horizontal: 'right' };
+                });
+            });
+            sheet.addRow([]);
         });
 
         // Response Headers

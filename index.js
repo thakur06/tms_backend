@@ -48,10 +48,12 @@ app.use("/api/timesheets", timesheetApprovalRoutes);
 
 // Backward compatibility route
 const { getCurrentWeekTotalTime } = require("./controllers/reportController");
-app.get("/total-time/current-week", getCurrentWeekTotalTime);
+const { protect } = require("./middlewares/authMiddleware");
 
-// Health check endpoint
-app.get("/health", (req, res) => {
+app.get("/total-time/current-week", protect, getCurrentWeekTotalTime);
+
+// Health check endpoint - although usually public, user said "NOTHING accessible without tokens"
+app.get("/health", protect, (req, res) => {
   res.json({ status: "ok" });
 });
 

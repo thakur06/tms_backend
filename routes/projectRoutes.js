@@ -8,7 +8,7 @@ const {
 } = require('../controllers/projectController');
 const { protect, isAdmin } = require('../middlewares/authMiddleware');
 
-router.get('/', getProjects);
+router.get('/', protect, getProjects);
 router.post('/', protect, isAdmin, createProject);
 router.put('/:id', protect, isAdmin, updateProject); // Added
 router.delete('/:projectCode', protect, isAdmin, deleteProject);
