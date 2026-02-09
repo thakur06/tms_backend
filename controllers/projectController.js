@@ -1,15 +1,19 @@
 const pool = require("../db");
+const { cache, redis } = require("../redis");
 
-// Get all projects
 // Get all projects
 exports.getProjects = async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT *
-      FROM projects
-      ORDER BY created_at DESC
-    `);
-    res.json(result.rows);
+    const projects = await cache("projects:all", async () => {
+      const result = await pool.query(`
+        SELECT *
+        FROM projects
+        ORDER BY created_at DESC
+      `);
+      return result.rows;
+    }, 600); // 10 mins cache
+
+    res.json(projects);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch projects" });
@@ -33,6 +37,7 @@ exports.createProject = async (req, res) => {
       `,
       [name, projectCode, location, client, category, status]
     );
+    await redis.del("projects:all");
     res.status(201).json(result.rows);
   } catch (err) {
     console.error(err);
@@ -62,6 +67,7 @@ exports.updateProject = async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
 
+    await redis.del("projects:all");
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -86,6 +92,7 @@ exports.deleteProject = async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
 
+    await redis.del("projects:all");
     res.json({
       message: "Project and all related time entries deleted",
       project: projectResult.rows[0],

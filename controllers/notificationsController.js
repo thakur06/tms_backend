@@ -44,37 +44,45 @@ async function checkAndNotifyLowHours() {
   const lowHourUsers = result.rows.filter(row => row.total_hours < 40);
   const notificationsSent = [];
 
-  // Send emails
-  for (const user of lowHourUsers) {
-    if (user.email) {
-      try {
-        const appName = process.env.APP_NAME || "TMS";
-        
-        // Use unified email template
-        const { subject, text, html } = lowHoursEmailTemplate({
-          appName,
-          name: user.name,
-          hours: user.total_hours,
-          startStr: start,
-          endStr: end
-        });
+  // Check if email notifications are enabled
+  const emailEnabled = process.env.ENABLE_LOW_HOURS_EMAIL === 'true';
 
-        // Include Manager in CC if available
-        const cc = user.manager_email || undefined;
-        
-        await sendEmail({ to: user.email, subject, text, html, cc });
-        notificationsSent.push({ email: user.email, status: 'sent' });
-      } catch (mailErr) {
-        console.error(`Failed to email ${user.email}`, mailErr);
-        notificationsSent.push({ email: user.email, status: 'failed' });
+  // Send emails only if enabled
+  if (emailEnabled) {
+    for (const user of lowHourUsers) {
+      if (user.email) {
+        try {
+          const appName = process.env.APP_NAME || "TMS";
+          
+          // Use unified email template
+          const { subject, text, html } = lowHoursEmailTemplate({
+            appName,
+            name: user.name,
+            hours: user.total_hours,
+            startStr: start,
+            endStr: end
+          });
+
+          // Include Manager in CC if available
+          const cc = user.manager_email || undefined;
+          
+          await sendEmail({ to: user.email, subject, text, html, cc });
+          notificationsSent.push({ email: user.email, status: 'sent' });
+        } catch (mailErr) {
+          console.error(`Failed to email ${user.email}`, mailErr);
+          notificationsSent.push({ email: user.email, status: 'failed' });
+        }
       }
     }
+  } else {
+    console.log("📧 Low hours email notifications are disabled (ENABLE_LOW_HOURS_EMAIL=false)");
   }
 
   return {
     weekRange: { start, end },
     totalUsersChecked: result.rows.length,
     lowHourUsersCount: lowHourUsers.length,
+    emailEnabled: process.env.ENABLE_LOW_HOURS_EMAIL === 'true',
     details: lowHourUsers.map(u => ({ name: u.name, hours: u.total_hours })),
     notifications: notificationsSent
   };
