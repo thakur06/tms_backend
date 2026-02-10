@@ -18,7 +18,7 @@ exports.login = async (req, res) => {
         // Find user by email and count direct reports
         const result = await pool.query(
             `SELECT 
-                u.id, u.name, u.email, u.dept, u.password, u.role,
+                u.id, u.name, u.email, u.dept, u.password, u.role, u.is_manager,
                 (SELECT COUNT(*) FROM users WHERE reporting_manager_id = u.id) as reports_count
              FROM users u 
              WHERE u.email = $1`,
@@ -39,7 +39,7 @@ exports.login = async (req, res) => {
             // If no password is set, allow login with any password (for initial setup)
             // In production, you might want to require password reset
             const token = jwt.sign(
-                { id: user.id, email: user.email, role: user.role }, 
+                { id: user.id, email: user.email, role: user.role, is_manager: user.is_manager === true }, 
                 process.env.JWT_SECRET || 'your-secret-key', 
                 { expiresIn: '30d' }
             );
@@ -52,6 +52,7 @@ exports.login = async (req, res) => {
                     email: user.email,
                     dept: user.dept,
                     role: user.role,
+                    isManager: user.is_manager === true,
                     reportsCount: parseInt(user.reports_count) || 0
                 }
             });
@@ -69,7 +70,7 @@ exports.login = async (req, res) => {
 
         // Generate token
         const token = jwt.sign(
-            { id: user.id, email: user.email, role: user.role }, 
+            { id: user.id, email: user.email, role: user.role, is_manager: user.is_manager === true }, 
             process.env.JWT_SECRET || 'your-secret-key', 
             { expiresIn: '30d' }
         );
@@ -83,6 +84,7 @@ exports.login = async (req, res) => {
                 email: user.email,
                 dept: user.dept,
                 role: user.role,
+                isManager: user.is_manager === true,
                 reportsCount: parseInt(user.reports_count) || 0
             }
         });

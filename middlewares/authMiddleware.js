@@ -41,4 +41,12 @@ const isAdmin = (req, res, next) => {
     }
 };
 
-module.exports = { protect, isAdmin };
+const isAdminOrManager = (req, res, next) => {
+    if (req.user && (req.user.role === 'admin' || req.user.role === 'manager' || req.user.is_manager === true)) {
+        next();
+    } else {
+        res.status(403).json({ message: 'Access denied. Admin or Manager privileges required.' });
+    }
+};
+
+module.exports = { protect, isAdmin, isAdminOrManager };

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middlewares/authMiddleware');
+const { protect, isAdminOrManager } = require('../middlewares/authMiddleware');
 const {
   getAllAssignments,
   getUserAssignments,
@@ -9,8 +9,9 @@ const {
   deleteAssignment
 } = require('../controllers/userProjectController');
 
-// All routes require authentication
+// All routes require authentication and Admin/Manager privileges
 router.use(protect);
+router.use(isAdminOrManager);
 
 // Get all assignments (grouped by user)
 router.get('/', getAllAssignments);

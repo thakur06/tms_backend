@@ -114,7 +114,7 @@ exports.getUserAssignments = async (req, res) => {
   }
 };
 
-// Create new assignment
+// Create new assignment or merge with existing
 exports.createAssignment = async (req, res) => {
   try {
     const { user_id, project_id, allocation_percentage, start_date, end_date } = req.body;
@@ -127,57 +127,122 @@ exports.createAssignment = async (req, res) => {
     if (allocation_percentage < 0 || allocation_percentage > 100) {
       return res.status(400).json({ error: "allocation_percentage must be between 0 and 100" });
     }
-    
-    // Check for overlapping assignments for the SAME project
-    // Actually, the user says "if end date is passed user will be free", 
-    // but they might want multiple assignments for DIFFERENT projects.
-    // The 100% check must be for ANY date within the range.
-    // This is complex. For now, let's validate against any date in the new range.
-    
-    const overlappingCheck = await pool.query(
-      `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
-       FROM (
-         SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
-       ) d
-       CROSS JOIN LATERAL (
-         SELECT SUM(allocation_percentage) as current_day_allocation
-         FROM user_projects
-         WHERE user_id = $3
-         AND d.day BETWEEN start_date AND end_date
-       ) up`,
-      [start_date, end_date, user_id]
+
+    // 1. Check if assignment already exists for this User + Project
+    const existingAssignmentRes = await pool.query(
+        `SELECT id, allocation_percentage, start_date, end_date 
+         FROM user_projects 
+         WHERE user_id = $1 AND project_id = $2`,
+        [user_id, project_id]
     );
 
-    const currentMax = overlappingCheck.rows.length > 0 ? parseInt(overlappingCheck.rows[0].max_allocation) : 0;
-    if (currentMax + allocation_percentage > 100) {
-      return res.status(400).json({ 
-        error: `Total allocation would exceed 100% on some dates in this range. Maximum existing allocation: ${currentMax}%. Available: ${100 - currentMax}%` 
-      });
+    // If it exists, we prepare for a MERGE (Update)
+    if (existingAssignmentRes.rows.length > 0) {
+        const existing = existingAssignmentRes.rows[0];
+        
+        // Calculate merged values
+        const newAllocation = existing.allocation_percentage + allocation_percentage;
+        
+        // Date handling: Ensure we parse strings to dates for comparison if needed, 
+        // but Postgres return dates as objects usually. 
+        // Simplest to let DB handle Min/Max or do it here. 
+        // Let's do it in JS to be safe with string/date types.
+        const currentStart = new Date(existing.start_date);
+        const currentEnd = new Date(existing.end_date);
+        const proposedStart = new Date(start_date);
+        const proposedEnd = new Date(end_date);
+
+        const mergedStartDate = proposedStart < currentStart ? start_date : existing.start_date; // Keep string format if possible or format it back
+        const mergedEndDate = proposedEnd > currentEnd ? end_date : existing.end_date;
+
+        // Validate 100% Cap for the MERGED scenario
+        // We need to check if (Sum of OTHER projects + newAllocation) > 100 
+        // for any day in the MERGED date range.
+        const overlappingCheck = await pool.query(
+            `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
+             FROM (
+               SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
+             ) d
+             CROSS JOIN LATERAL (
+               SELECT SUM(allocation_percentage) as current_day_allocation
+               FROM user_projects
+               WHERE user_id = $3
+               AND id != $4  -- Exclude the current record we are about to update
+               AND d.day BETWEEN start_date AND end_date
+             ) up`,
+            [mergedStartDate, mergedEndDate, user_id, existing.id]
+        );
+
+        const currentMax = overlappingCheck.rows.length > 0 ? parseInt(overlappingCheck.rows[0].max_allocation) : 0;
+        
+        if (currentMax + newAllocation > 100) {
+             return res.status(400).json({ 
+                error: `Merging this assignment would exceed 100% load. 
+                        Merged Load: ${newAllocation}%. 
+                        Max Other Load in range: ${currentMax}%. 
+                        Total: ${currentMax + newAllocation}%` 
+            });
+        }
+
+        // Perform Update
+        const updateQuery = `
+            UPDATE user_projects 
+            SET allocation_percentage = $1, start_date = $2, end_date = $3, updated_at = NOW()
+            WHERE id = $4
+            RETURNING *
+        `;
+        const updateResult = await pool.query(updateQuery, [newAllocation, mergedStartDate, mergedEndDate, existing.id]);
+        
+        return res.status(200).json({
+            success: true,
+            message: "Assignment merged successfully",
+            data: updateResult.rows[0]
+        });
+
+    } else {
+        // 2. New Assignment Logic (Legacy Insert)
+        
+        // Check 100% Cap for NEW insert
+        const overlappingCheck = await pool.query(
+          `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
+           FROM (
+             SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
+           ) d
+           CROSS JOIN LATERAL (
+             SELECT SUM(allocation_percentage) as current_day_allocation
+             FROM user_projects
+             WHERE user_id = $3
+             AND d.day BETWEEN start_date AND end_date
+           ) up`,
+          [start_date, end_date, user_id]
+        );
+
+        const currentMax = overlappingCheck.rows.length > 0 ? parseInt(overlappingCheck.rows[0].max_allocation) : 0;
+        if (currentMax + allocation_percentage > 100) {
+          return res.status(400).json({ 
+            error: `Total allocation would exceed 100% on some dates. Max existing: ${currentMax}%. Requested: ${allocation_percentage}%` 
+          });
+        }
+        
+        // Insert new assignment
+        const insertQuery = `
+          INSERT INTO user_projects (user_id, project_id, allocation_percentage, start_date, end_date)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+        `;
+        
+        const result = await pool.query(insertQuery, [user_id, project_id, allocation_percentage, start_date, end_date]);
+        
+        res.status(201).json({
+          success: true,
+          message: "Assignment created successfully",
+          data: result.rows[0]
+        });
     }
-    
-    // Insert new assignment
-    const insertQuery = `
-      INSERT INTO user_projects (user_id, project_id, allocation_percentage, start_date, end_date)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *
-    `;
-    
-    const result = await pool.query(insertQuery, [user_id, project_id, allocation_percentage, start_date, end_date]);
-    
-    res.status(201).json({
-      success: true,
-      message: "Assignment created successfully",
-      data: result.rows[0]
-    });
+
   } catch (err) {
-    console.error("Failed to create assignment:", err);
-    
-    // Handle unique constraint violation
-    if (err.code === '23505') {
-      return res.status(409).json({ error: "This user is already assigned to this project" });
-    }
-    
-    res.status(500).json({ error: "Failed to create assignment" });
+    console.error("Failed to create/merge assignment:", err);
+    res.status(500).json({ error: "Failed to process assignment" });
   }
 };
 
