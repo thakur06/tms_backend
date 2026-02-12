@@ -8,7 +8,7 @@ const ensureUserProjectsTable = async () => {
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        allocation_percentage INTEGER NOT NULL CHECK (allocation_percentage >= 0 AND allocation_percentage <= 100),
+        allocation_percentage INTEGER NOT NULL CHECK (allocation_percentage >= 0 AND allocation_percentage <= 100), -- Ensure percentage is valid
         start_date DATE NOT NULL DEFAULT CURRENT_DATE,
         end_date DATE NOT NULL DEFAULT '9999-12-31',
         created_at TIMESTAMPTZ DEFAULT NOW(),
