@@ -17,6 +17,7 @@ const { ensureTimeEntriesTable } = require("./validators/timeEntriesSchema");
 const { ensureClientsTable } = require("./validators/clientSchema");
 const { ensurePasswordResetOtpTable } = require("./validators/passwordResetOtpSchema");
 const { ensureUserProjectsTable } = require("./validators/userProjectsSchema");
+const { ensureTimesheetApprovalsTable } = require("./validators/timesheetApprovalsSchema");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -87,6 +88,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
     ensureClientsTable(),
     ensurePasswordResetOtpTable(),
     ensureUserProjectsTable(),
+    ensureTimesheetApprovalsTable(),
   ]).then(() => {
     console.log("✅ Database schema verified");
     for (let i = 0; i < numCPUs; i++) cluster.fork();
@@ -120,6 +122,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
           ensureClientsTable(),
           ensurePasswordResetOtpTable(),
           ensureUserProjectsTable(),
+          ensureTimesheetApprovalsTable(),
         ]);
         console.log("✅ Database schema verified (Dev/Single Mode)");
      }
