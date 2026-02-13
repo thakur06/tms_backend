@@ -19,6 +19,8 @@ const { ensurePasswordResetOtpTable } = require("./validators/passwordResetOtpSc
 const { ensureUserProjectsTable } = require("./validators/userProjectsSchema");
 const { ensureTimesheetApprovalsTable } = require("./validators/timesheetApprovalsSchema");
 const { ensureDepartmentsTable } = require("./validators/departmentSchema");
+const { ensureTicketsTable } = require("./validators/ticketsSchema");
+const { ensureTicketCommentsTable } = require("./validators/ticketCommentsSchema");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -33,6 +35,7 @@ const seedRoutes = require("./routes/seedRoutes");
 const notificationRoutes = require("./routes/notificationsRoutes");
 const timesheetApprovalRoutes = require("./routes/timesheetApprovalRoutes");
 const userProjectRoutes = require("./routes/userProjectRoutes");
+const ticketRoutes = require("./routes/ticketRoutes");
 
 const numCPUs = os.cpus().length;
 const app = express();
@@ -70,6 +73,7 @@ app.use("/", seedRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/timesheets", timesheetApprovalRoutes);
 app.use("/api/user-projects", userProjectRoutes);
+app.use("/api/tickets", ticketRoutes);
 
 const { getCurrentWeekTotalTime } = require("./controllers/reportController");
 const { protect } = require("./middlewares/authMiddleware");
@@ -91,6 +95,8 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
     ensureUserProjectsTable(),
     ensureTimesheetApprovalsTable(),
     ensureDepartmentsTable(),
+    ensureTicketsTable(),
+    ensureTicketCommentsTable(),
   ]).then(() => {
     console.log("✅ Database schema verified");
     for (let i = 0; i < numCPUs; i++) cluster.fork();
@@ -126,6 +132,8 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
           ensureUserProjectsTable(),
           ensureTimesheetApprovalsTable(),
           ensureDepartmentsTable(),
+          ensureTicketsTable(),
+          ensureTicketCommentsTable(),
         ]);
         console.log("✅ Database schema verified (Dev/Single Mode)");
      }
