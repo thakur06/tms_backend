@@ -9,7 +9,6 @@ const rateLimit = require("express-rate-limit");
 const { redis } = require("./redis");
 const { RedisStore } = require("rate-limit-redis");
 
-const { ensureDeptTable } = require("./validators/deptSchema");
 const { ensureTasksTable } = require("./validators/tasksSchema");
 const { ensureUsersTable } = require("./validators/userSchema");
 const { ensureProjectsTable } = require("./validators/projectsSchema");
@@ -84,22 +83,31 @@ app.get("/health", (req, res) => res.json({ status: "ok", worker: process.pid })
 if (cluster.isPrimary && process.env.NODE_ENV === "production") {
   console.log(`🚀 Primary process ${process.pid} is running`);
 
+  // 1️⃣ Stage 1: Base Tables
   Promise.all([
-    ensureProjectsTable(),
-    ensureTimeEntriesTable(),
     ensureUsersTable(),
     ensureTasksTable(),
-    ensureDeptTable(),
-    ensureClientsTable(),
-    ensurePasswordResetOtpTable(),
-    ensureUserProjectsTable(),
-    ensureTimesheetApprovalsTable(),
     ensureDepartmentsTable(),
-    ensureTicketsTable(),
-    ensureTicketCommentsTable(),
+    ensureClientsTable(),
+    ensureProjectsTable(),
   ]).then(() => {
+    // 2️⃣ Stage 2: Level 1 Dependents (referencing Stage 1)
+    return Promise.all([
+      ensurePasswordResetOtpTable(),
+      ensureTimesheetApprovalsTable(),
+      ensureUserProjectsTable(),
+      ensureTimeEntriesTable(),
+      ensureTicketsTable(),
+    ]);
+  }).then(() => {
+    // 3️⃣ Stage 3: Level 2 Dependents (referencing Stage 2)
+    return ensureTicketCommentsTable();
+  }).then(() => {
     console.log("✅ Database schema verified");
     for (let i = 0; i < numCPUs; i++) cluster.fork();
+  }).catch((err) => {
+    console.error("❌ Database verification failed:", err);
+    process.exit(1);
   });
 
   cluster.on("exit", (worker) => {
@@ -121,22 +129,34 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
      // So it lands here. We MUST run validators here.
      
      if (cluster.isPrimary) {
-        await Promise.all([
-          ensureProjectsTable(),
-          ensureTimeEntriesTable(),
-          ensureUsersTable(),
-          ensureTasksTable(),
-          ensureDeptTable(),
-          ensureClientsTable(),
-          ensurePasswordResetOtpTable(),
-          ensureUserProjectsTable(),
-          ensureTimesheetApprovalsTable(),
-          ensureDepartmentsTable(),
-          ensureTicketsTable(),
-          ensureTicketCommentsTable(),
-        ]);
-        console.log("✅ Database schema verified (Dev/Single Mode)");
-     }
+         try {
+            // 1️⃣ Stage 1: Base Tables
+            await Promise.all([
+              ensureUsersTable(),
+              ensureTasksTable(),
+              ensureDepartmentsTable(),
+              ensureClientsTable(),
+              ensureProjectsTable(),
+            ]);
+
+            // 2️⃣ Stage 2: Level 1 Dependents
+            await Promise.all([
+              ensurePasswordResetOtpTable(),
+              ensureTimesheetApprovalsTable(),
+              ensureUserProjectsTable(),
+              ensureTimeEntriesTable(),
+              ensureTicketsTable(),
+            ]);
+
+            // 3️⃣ Stage 3: Level 2 Dependents
+            await ensureTicketCommentsTable();
+            
+            console.log("✅ Database schema verified (Dev/Single Mode)");
+         } catch (err) {
+            console.error("❌ Database verification failed (Dev):", err);
+            process.exit(1);
+         }
+      }
   };
 
   runValidators().then(() => {
