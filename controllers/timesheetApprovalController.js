@@ -493,7 +493,7 @@ exports.getTimesheetComplianceReport = async (req, res) => {
     }
 
     // Base query to get relevant users
-    let usersQuery = `SELECT id, name, email, dept, reporting_manager_id FROM users WHERE role != 'admin'`; 
+    let usersQuery = `SELECT id, name, email, dept, reporting_manager_id FROM users WHERE 1=1`; 
     const queryParams = [];
     
     // Filter logic:
@@ -549,7 +549,14 @@ exports.getTimesheetComplianceReport = async (req, res) => {
         // We need to find the user ID corresponding to this email
         const user = users.find(u => u.email === r.user_email);
         if (user) {
-            const k = `${user.id}-${new Date(r.entry_date).toISOString().split('T')[0]}`;
+            // Fix: Use local date components or string manipulation to avoid timezone shift
+            const d = new Date(r.entry_date);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const dateStr = `${year}-${month}-${day}`;
+
+            const k = `${user.id}-${dateStr}`;
             if (!entriesMap[k]) entriesMap[k] = 0;
             entriesMap[k] += (parseFloat(r.hours) || 0) + ((parseFloat(r.minutes) || 0) / 60);
         }
@@ -564,11 +571,27 @@ exports.getTimesheetComplianceReport = async (req, res) => {
         // Loop through requested date range (7 days)
         const d = new Date(startDate);
         for(let i=0; i<7; i++) {
-            const dateStr = d.toISOString().split('T')[0];
+            // Need consistent string format for lookup
+            // startDate is YYYY-MM-DD from client
+            // d is created from it (UTC midnight usually if just date string)
+            // But we want to iterate date by date
+            
+            // To be safe, construct date string manually from d (which iterates)
+            // If d is created as UTC, getUTCDate works. If local, getDate works.
+            // Let's assume startDate is 'YYYY-MM-DD' key. 
+            // We can just parse startDate parts and increment.
+            
+            // Actually simpler: 
+            const iterDate = new Date(startDate);
+            iterDate.setDate(iterDate.getDate() + i);
+            const iy = iterDate.getFullYear();
+            const im = String(iterDate.getMonth() + 1).padStart(2, '0');
+            const id = String(iterDate.getDate()).padStart(2, '0');
+            const dateStr = `${iy}-${im}-${id}`;
+
             const val = entriesMap[`${u.id}-${dateStr}`] || 0;
             dailyHours[dateStr] = val;
             total += val;
-            d.setDate(d.getDate() + 1);
         }
 
         return {

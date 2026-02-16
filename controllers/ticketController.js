@@ -180,3 +180,38 @@ exports.addComment = async (req, res) => {
         res.status(500).json({ error: "Failed to add comment" });
     }
 };
+// Update Comment
+exports.updateComment = async (req, res) => {
+    try {
+        const { id, commentId } = req.params;
+        const { content } = req.body;
+        const user_id = req.user.id;
+
+        // Verify ownership
+        const commentResult = await pool.query(
+            "SELECT * FROM ticket_comments WHERE id = $1",
+            [commentId]
+        );
+
+        if (commentResult.rows.length === 0) {
+            return res.status(404).json({ error: "Comment not found" });
+        }
+
+        if (commentResult.rows[0].user_id !== user_id) {
+            return res.status(403).json({ error: "Unauthorized to edit this comment" });
+        }
+
+        const result = await pool.query(
+            `UPDATE ticket_comments 
+             SET content = $1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+             RETURNING *, (SELECT name FROM users WHERE id = user_id) as user_name`,
+            [content, commentId]
+        );
+
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update comment" });
+    }
+};

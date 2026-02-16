@@ -6,7 +6,8 @@ const {
     getTicketById,
     updateTicket,
     deleteTicket,
-    addComment
+    addComment,
+    updateComment
 } = require('../controllers/ticketController');
 const { protect } = require('../middlewares/authMiddleware');
 
@@ -19,5 +20,6 @@ router.put('/:id', updateTicket);
 router.delete('/:id', deleteTicket);
 
 router.post('/:id/comments', addComment);
+router.put('/:id/comments/:commentId', updateComment);
 
 module.exports = router;
