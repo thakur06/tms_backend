@@ -7,13 +7,15 @@ const {
     updateTicket,
     deleteTicket,
     addComment,
-    updateComment
+    updateComment,
+    createBulkTickets
 } = require('../controllers/ticketController');
 const { protect } = require('../middlewares/authMiddleware');
 
 router.use(protect); // Protect all ticket routes
 
 router.post('/', createTicket);
+router.post('/bulk', createBulkTickets);
 router.get('/', getTickets);
 router.get('/:id', getTicketById);
 router.put('/:id', updateTicket);

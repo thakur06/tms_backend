@@ -5,20 +5,56 @@ const pool = require("../db");
 // Create Ticket
 exports.createTicket = async (req, res) => {
     try {
-        const { title, description, type, priority, project_id, assignee_id } = req.body;
+        const { title, description, type, priority, project_id, assignee_id, status, estimated_hours } = req.body;
         const reporter_id = req.user.id; // From authMiddleware
 
         const result = await pool.query(
-            `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING *`,
-            [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id]
+            [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0]
         );
 
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to create ticket" });
+    }
+};
+
+// Bulk Create Tickets
+exports.createBulkTickets = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { tickets } = req.body; // Array of ticket objects
+        const reporter_id = req.user.id;
+
+        if (!Array.isArray(tickets) || tickets.length === 0) {
+            return res.status(400).json({ error: "No tickets provided" });
+        }
+
+        await client.query('BEGIN');
+
+        const createdTickets = [];
+        for (const ticket of tickets) {
+            const { title, description, type, priority, project_id, assignee_id, status, estimated_hours } = ticket;
+            const result = await client.query(
+                `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 RETURNING *`,
+                [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0]
+            );
+            createdTickets.push(result.rows[0]);
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json(createdTickets);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error("Bulk create failed:", err);
+        res.status(500).json({ error: "Failed to create tickets" });
+    } finally {
+        client.release();
     }
 };
 
