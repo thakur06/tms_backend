@@ -5,14 +5,14 @@ const pool = require("../db");
 // Create Ticket
 exports.createTicket = async (req, res) => {
     try {
-        const { title, description, type, priority, project_id, assignee_id, status, estimated_hours } = req.body;
+        const { title, description, type, priority, project_id, assignee_id, status, estimated_hours, estimated_date } = req.body;
         const reporter_id = req.user.id; // From authMiddleware
 
         const result = await pool.query(
-            `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours, estimated_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
-            [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0]
+            [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0, estimated_date]
         );
 
         res.status(201).json(result.rows[0]);
@@ -37,12 +37,12 @@ exports.createBulkTickets = async (req, res) => {
 
         const createdTickets = [];
         for (const ticket of tickets) {
-            const { title, description, type, priority, project_id, assignee_id, status, estimated_hours } = ticket;
+            const { title, description, type, priority, project_id, assignee_id, status, estimated_hours, estimated_date } = ticket;
             const result = await client.query(
-                `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                `INSERT INTO tickets (title, description, type, priority, project_id, reporter_id, assignee_id, status, estimated_hours, estimated_date)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  RETURNING *`,
-                [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0]
+                [title, description, type || 'Task', priority || 'Medium', project_id, reporter_id, assignee_id, status || 'Open', estimated_hours || 0, estimated_date]
             );
             createdTickets.push(result.rows[0]);
         }
@@ -152,7 +152,7 @@ exports.getTicketById = async (req, res) => {
 exports.updateTicket = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, status, priority, assignee_id, type } = req.body;
+        const { title, description, status, priority, assignee_id, type, estimated_date, estimated_hours } = req.body;
 
         const result = await pool.query(
             `UPDATE tickets 
@@ -161,10 +161,12 @@ exports.updateTicket = async (req, res) => {
                  status = COALESCE($3, status),
                  priority = COALESCE($4, priority),
                  assignee_id = COALESCE($5, assignee_id),
-                 type = COALESCE($6, type)
-             WHERE id = $7
+                 type = COALESCE($6, type),
+                 estimated_date = COALESCE($7, estimated_date),
+                 estimated_hours = COALESCE($8, estimated_hours)
+             WHERE id = $9
              RETURNING *`,
-            [title, description, status, priority, assignee_id, type, id]
+            [title, description, status, priority, assignee_id, type, estimated_date, estimated_hours, id]
         );
 
         if (result.rows.length === 0) {
@@ -249,5 +251,34 @@ exports.updateComment = async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to update comment" });
+    }
+};
+
+// Delete Comment
+exports.deleteComment = async (req, res) => {
+    try {
+        const { id, commentId } = req.params;
+        const user_id = req.user.id;
+
+        // Verify ownership
+        const commentResult = await pool.query(
+            "SELECT * FROM ticket_comments WHERE id = $1",
+            [commentId]
+        );
+
+        if (commentResult.rows.length === 0) {
+            return res.status(404).json({ error: "Comment not found" });
+        }
+
+        if (commentResult.rows[0].user_id !== user_id) {
+            return res.status(403).json({ error: "Unauthorized to delete this comment" });
+        }
+
+        await pool.query("DELETE FROM ticket_comments WHERE id = $1", [commentId]);
+
+        res.json({ message: "Comment deleted successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to delete comment" });
     }
 };

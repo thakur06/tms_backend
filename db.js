@@ -1,4 +1,9 @@
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
+
+// Override DATE parser to return raw string "YYYY-MM-DD"
+types.setTypeParser(1082, function(stringValue) {
+  return stringValue;
+});
 require("dotenv").config();
 
 const os = require("os");
