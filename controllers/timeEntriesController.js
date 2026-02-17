@@ -1,4 +1,5 @@
 const pool = require("../db");
+const { syncTimeEntryToAssignment } = require("./userProjectController");
 
 // Create a time entry
 exports.createTimeEntry = async (req, res) => {
@@ -59,6 +60,9 @@ exports.createTimeEntry = async (req, res) => {
         minutes
       ]
     );
+
+    // Bidirectional Sync: Update project assignments
+    await syncTimeEntryToAssignment(pool, user.email, date, hours, taskId);
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -180,7 +184,11 @@ exports.deleteTimeEntry = async (req, res) => {
       [id]
     );
 
-    res.json({ message: "Time entry deleted", deleted: result.rows[0] });
+    const deletedEntry = result.rows[0];
+    // Bidirectional Sync: Remove assignment
+    await syncTimeEntryToAssignment(pool, userEmail, deletedEntry.entry_date, 0, deletedEntry.task_id);
+
+    res.json({ message: "Time entry deleted", deleted: deletedEntry });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to delete time entry" });
@@ -243,7 +251,18 @@ exports.updateTimeEntry = async (req, res) => {
       [taskId, hours, minutes, project, country, remarks, entry_date, client, id]
     );
 
-    res.json(result.rows[0]);
+    const updatedEntry = result.rows[0];
+    
+    // Bidirectional Sync: Update assignment
+    // If the date or task changed, we should ideally clear the old assignment too, 
+    // but syncTimeEntryToAssignment handles the CURRENT state. 
+    // To be safe, if date changed, we'd need to sync the OLD date with 0 hours.
+    if (checkResult.rows[0].entry_date !== entry_date || checkResult.rows[0].task_id !== taskId) {
+        await syncTimeEntryToAssignment(pool, userEmail, checkResult.rows[0].entry_date, 0, checkResult.rows[0].task_id);
+    }
+    await syncTimeEntryToAssignment(pool, userEmail, entry_date, hours, taskId);
+
+    res.json(updatedEntry);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update time entry" });
@@ -283,7 +302,12 @@ exports.bulkTimeEntry = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
           [taskId, user.name, user.dept, user.email, project, project_code, country || 'US', remarks, clientName || '', date, hours || 0, minutes || 0]
         );
-        results.push({ type: 'create', id: res.rows[0].id });
+        const newId = res.rows[0].id;
+
+        // Bidirectional Sync
+        await syncTimeEntryToAssignment(client, user.email, date, hours || 0, taskId);
+
+        results.push({ type: 'create', id: newId });
       } else if (op.type === 'update') {
         const { id, taskId, project, project_code, country, remarks, date, hours, minutes, client: clientName } = op.data;
         // Verify ownership (simplified for bulk)
@@ -293,13 +317,25 @@ exports.bulkTimeEntry = async (req, res) => {
             `UPDATE time_entries SET task_id=$1, project_name=$2, project_code=$3, location=$4, remarks=$5, client=$6, entry_date=$7, hours=$8, minutes=$9 WHERE id=$10`,
             [taskId, project, project_code, country || 'US', remarks, clientName || '', date, hours || 0, minutes || 0, id]
           );
+
+          // Bidirectional Sync
+          if (check.rows[0].entry_date !== date || check.rows[0].task_id !== taskId) {
+              await syncTimeEntryToAssignment(client, userEmail, check.rows[0].entry_date, 0, check.rows[0].task_id);
+          }
+          await syncTimeEntryToAssignment(client, userEmail, date, hours || 0, taskId);
+
           results.push({ type: 'update', id });
         }
       } else if (op.type === 'delete') {
         const { id } = op.data;
-        const check = await client.query('SELECT user_email FROM time_entries WHERE id = $1', [id]);
+        const check = await client.query('SELECT user_email, entry_date, task_id FROM time_entries WHERE id = $1', [id]);
         if (check.rows.length > 0 && check.rows[0].user_email === userEmail) {
+          const deletedEntry = check.rows[0];
           await client.query('DELETE FROM time_entries WHERE id = $1', [id]);
+
+          // Bidirectional Sync
+          await syncTimeEntryToAssignment(client, userEmail, deletedEntry.entry_date, 0, deletedEntry.task_id);
+
           results.push({ type: 'delete', id });
         }
       }

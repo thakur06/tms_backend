@@ -6,7 +6,8 @@ const {
   getUserAssignments,
   createAssignment,
   updateAssignment,
-  deleteAssignment
+  deleteAssignment,
+  savePtoAssignments
 } = require('../controllers/userProjectController');
 
 // All routes require authentication and Admin/Manager privileges
@@ -21,6 +22,9 @@ router.get('/user/:userId', getUserAssignments);
 
 // Create new assignment
 router.post('/', createAssignment);
+
+// Bulk save PTO (Excel-like view)
+router.post('/bulk-pto', savePtoAssignments);
 
 // Update assignment
 router.put('/:id', updateAssignment);
