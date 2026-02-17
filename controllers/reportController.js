@@ -394,7 +394,10 @@ exports.exportTimeEntriesExcel = async (req, res) => {
             userData.entries.forEach((entry, entryIndex) => {
                 const row = sheet.addRow([
                     entry.user_name, entry.user_email || "-", entry.user_dept || "-",
-                    new Date(entry.entry_date).toLocaleDateString(), entry.task_id || "-", entry.project_name || "-",
+                    // Fix: Use substring or raw date to prevent timezone shift. 
+                    // entry.entry_date is already "YYYY-MM-DD" string from DB driver override
+                    String(entry.entry_date).substring(0, 10), 
+                    entry.task_id || "-", entry.project_name || "-",
                     entry.hours, entry.minutes, entry.location || "-", entry.remarks || "-", entry.client || "-"
                 ]);
                 row.eachCell((cell, colNumber) => {
