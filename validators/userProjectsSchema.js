@@ -8,7 +8,7 @@ const ensureUserProjectsTable = async () => {
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        allocation_hours INTEGER NOT NULL CHECK (allocation_hours >= 0 AND allocation_hours <= 160), -- Ensure hours is valid (max 160h/month)
+        allocation_hours INTEGER NOT NULL CHECK (allocation_hours >= 0 AND allocation_hours <= 744), -- Ensure hours is valid (max 744h/month)
         start_date DATE NOT NULL DEFAULT CURRENT_DATE,
         end_date DATE NOT NULL DEFAULT '9999-12-31',
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -32,7 +32,8 @@ const ensureUserProjectsTable = async () => {
       ALTER TABLE user_projects 
       ADD COLUMN IF NOT EXISTS allocation_hours INTEGER NOT NULL DEFAULT 40,
       ADD COLUMN IF NOT EXISTS start_date DATE NOT NULL DEFAULT CURRENT_DATE,
-      ADD COLUMN IF NOT EXISTS end_date DATE NOT NULL DEFAULT '9999-12-31';
+      ADD COLUMN IF NOT EXISTS end_date DATE NOT NULL DEFAULT '9999-12-31',
+      ADD COLUMN IF NOT EXISTS remarks TEXT;
     `);
 
     // Ensure check constraint exists for allocation_hours (0-160)
@@ -44,7 +45,7 @@ const ensureUserProjectsTable = async () => {
       await pool.query(`
         ALTER TABLE user_projects 
         ADD CONSTRAINT user_projects_allocation_hours_check 
-        CHECK (allocation_hours >= 0 AND allocation_hours <= 160);
+        CHECK (allocation_hours >= 0 AND allocation_hours <= 744);
       `);
     } catch (e) {
       console.warn("⚠️ Note: Could not update constraint, might already be correct or table empty.", e.message);

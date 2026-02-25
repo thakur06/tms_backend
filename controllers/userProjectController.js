@@ -1,12 +1,70 @@
 const pool = require("../db");
 
+// Helper to count workdays between two dates (inclusive)
+const countWorkdays = (startStr, endStr) => {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  let count = 0;
+  let cur = new Date(start);
+  while (cur <= end) {
+    const day = cur.getDay();
+    if (day !== 0 && day !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+};
+
+// Helper to sync PTO hours for regular projects
+const syncPTOHours = async (client, userId, startDate, endDate) => {
+  try {
+    // 1. Find all regular assignments (non-PTO) that overlap with the changed range
+    const assignmentsRes = await client.query(
+      `SELECT up.id, up.user_id, up.start_date, up.end_date, up.base_hours
+       FROM user_projects up
+       JOIN projects p ON up.project_id = p.id
+       WHERE up.user_id = $1
+       AND (p.category != 'PTO' AND p.name != 'Leave')
+       AND up.start_date <= $3::DATE AND up.end_date >= $2::DATE`,
+      [userId, startDate, endDate]
+    );
+
+    for (const ass of assignmentsRes.rows) {
+      // 2. Sum ALL PTO hours for this user within THIS assignment's range
+      const ptoCheck = await client.query(
+        `SELECT COALESCE(SUM(allocation_hours), 0) as pto_hours
+         FROM user_projects up
+         JOIN projects p ON up.project_id = p.id
+         WHERE up.user_id = $1 
+         AND (p.category = 'PTO' OR p.name = 'Leave')
+         AND up.start_date <= $3::DATE AND up.end_date >= $2::DATE`,
+        [ass.user_id, ass.start_date, ass.end_date]
+      );
+
+      const ptoHours = parseFloat(ptoCheck.rows[0].pto_hours);
+      const newAllocation = parseFloat(ass.base_hours) + ptoHours;
+      const remarks = ptoHours > 0 ? `Includes ${ptoHours}h of PTO during the period` : null;
+
+      await client.query(
+        "UPDATE user_projects SET allocation_hours = $1, remarks = $2, updated_at = NOW() WHERE id = $3",
+        [newAllocation, remarks, ass.id]
+      );
+    }
+  } catch (err) {
+    console.error("Failed to sync PTO hours:", err);
+    throw err;
+  }
+};
+
 // Get all user-project assignments with user and project details
 exports.getAllAssignments = async (req, res) => {
   try {
-    const { date, month: qMonth, year: qYear } = req.query;
+    const { date, month: qMonth, year: qYear, startDate: rStart, endDate: rEnd } = req.query;
     let startDate, endDate;
 
-    if (qMonth && qYear) {
+    if (rStart && rEnd) {
+      startDate = rStart;
+      endDate = rEnd;
+    } else if (qMonth && qYear) {
       startDate = `${qYear}-${String(qMonth).padStart(2, '0')}-01`;
       endDate = new Date(qYear, qMonth, 0).toISOString().split('T')[0];
     } else {
@@ -21,8 +79,10 @@ exports.getAllAssignments = async (req, res) => {
         up.user_id,
         up.project_id,
         up.allocation_hours,
+        up.base_hours,
         up.start_date,
         up.end_date,
+        up.remarks,
         up.created_at,
         up.updated_at,
         u.name as user_name,
@@ -43,6 +103,29 @@ exports.getAllAssignments = async (req, res) => {
     
     // Group by user for easier frontend consumption
     const groupedByUser = result.rows.reduce((acc, row) => {
+      // Pro-rate hours based on workdays in the selected range
+      const totalWorkdays = countWorkdays(row.start_date, row.end_date);
+      
+      const assStart = new Date(row.start_date);
+      const assEnd = new Date(row.end_date);
+      const qStart = new Date(startDate);
+      const qEnd = new Date(endDate);
+      
+      const oStart = assStart > qStart ? row.start_date : startDate;
+      const oEnd = assEnd < qEnd ? row.end_date : endDate;
+      
+      const overlapWorkdays = countWorkdays(oStart, oEnd);
+      
+      if (totalWorkdays > 0) {
+        row.allocation_hours = parseFloat(((overlapWorkdays / totalWorkdays) * row.allocation_hours).toFixed(2));
+      } else if (assStart >= qStart && assEnd <= qEnd) {
+        // If it's a weekend-only assignment and fully fits in query, show it
+        // Otherwise it might be confusing if it disappears entirely
+        row.allocation_hours = row.allocation_hours;
+      } else {
+        row.allocation_hours = 0;
+      }
+
       const userId = row.user_id;
       if (!acc[userId]) {
         acc[userId] = {
@@ -63,13 +146,15 @@ exports.getAllAssignments = async (req, res) => {
         project_client: row.project_client,
         project_category: row.project_category,
         allocation_hours: row.allocation_hours,
+        base_hours: row.base_hours,
+        remarks: row.remarks,
         start_date: row.start_date,
         end_date: row.end_date,
         created_at: row.created_at,
         updated_at: row.updated_at
       });
       
-      acc[userId].total_allocation += row.allocation_hours;
+      acc[userId].total_allocation = parseFloat((acc[userId].total_allocation + row.allocation_hours).toFixed(2));
       
       return acc;
     }, {});
@@ -95,8 +180,10 @@ exports.getUserAssignments = async (req, res) => {
         up.user_id,
         up.project_id,
         up.allocation_hours,
+        up.base_hours,
         up.start_date,
         up.end_date,
+        up.remarks,
         up.created_at,
         up.updated_at,
         p.name as project_name,
@@ -136,125 +223,89 @@ exports.createAssignment = async (req, res) => {
       return res.status(400).json({ error: "user_id, project_id, allocation_hours, start_date, and end_date are required" });
     }
     
-    if (allocation_hours < 0 || allocation_hours > 160) {
-      return res.status(400).json({ error: "allocation_hours must be between 0 and 160" });
+    if (allocation_hours < 0 || allocation_hours > 744) {
+      return res.status(400).json({ error: "allocation_hours must be between 0 and 744" });
     }
 
     if (new Date(start_date) > new Date(end_date)) {
       return res.status(400).json({ error: "Start date must be before or equal to end date" });
     }
 
-    // 1. Check if assignment already exists for this User + Project
-    const existingAssignmentRes = await pool.query(
-        `SELECT id, allocation_hours, start_date, end_date 
-         FROM user_projects 
-         WHERE user_id = $1 AND project_id = $2`,
-        [user_id, project_id]
+    // 0. Check if this is a PTO project assignment (Leave)
+    const projectCheck = await pool.query("SELECT category, name FROM projects WHERE id = $1", [project_id]);
+    const isPto = projectCheck.rows.length > 0 && (projectCheck.rows[0].category === 'PTO' || projectCheck.rows[0].name === 'Leave');
+
+    let finalAllocation = parseFloat(allocation_hours);
+    let finalBaseHours = parseFloat(allocation_hours);
+    let finalRemarks = null;
+
+    if (!isPto) {
+      // Find PTO hours for this user in the range
+      const ptoCheck = await pool.query(
+        `SELECT COALESCE(SUM(allocation_hours), 0) as pto_hours
+         FROM user_projects up
+         JOIN projects p ON up.project_id = p.id
+         WHERE up.user_id = $1 
+         AND (p.category = 'PTO' OR p.name = 'Leave')
+         AND up.start_date <= $3::DATE AND up.end_date >= $2::DATE`,
+        [user_id, start_date, end_date]
+      );
+      
+      const ptoHoursNum = parseFloat(ptoCheck.rows[0].pto_hours);
+      if (ptoHoursNum > 0) {
+        finalAllocation += ptoHoursNum;
+        finalRemarks = `Includes ${ptoHoursNum}h of PTO during the period`;
+        res.pto_hours_added = ptoHoursNum; // Store in local var for response
+      }
+    }
+
+    // 1. New Assignment Logic (No longer merging same projects automatically)
+    
+    // Check 160h Cap for NEW insert (now 744h)
+    const overlappingCheck = await pool.query(
+      `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
+       FROM (
+         SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
+       ) d
+       CROSS JOIN LATERAL (
+         SELECT SUM(allocation_hours) as current_day_allocation
+         FROM user_projects
+         WHERE user_id = $3
+         AND d.day BETWEEN start_date AND end_date
+       ) up`,
+      [start_date, end_date, user_id]
     );
 
-    // If it exists, we prepare for a MERGE (Update)
-    if (existingAssignmentRes.rows.length > 0) {
-        const existing = existingAssignmentRes.rows[0];
-        
-        // Calculate merged values
-        const newAllocation = existing.allocation_hours + parseInt(allocation_hours);
-        
-        const proposedStart = new Date(start_date);
-        const proposedEnd = new Date(end_date);
-        const currentStart = new Date(existing.start_date);
-        const currentEnd = new Date(existing.end_date);
-
-        const mergedStartDate = proposedStart < currentStart ? start_date : existing.start_date;
-        const mergedEndDate = proposedEnd > currentEnd ? end_date : existing.end_date;
-
-        // Validate 160h Cap for the MERGED scenario
-        const overlappingCheck = await pool.query(
-            `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
-             FROM (
-               SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
-             ) d
-             CROSS JOIN LATERAL (
-               SELECT SUM(allocation_hours) as current_day_allocation
-               FROM user_projects
-               WHERE user_id = $3
-               AND id != $4
-               AND d.day BETWEEN start_date AND end_date
-             ) up`,
-            [mergedStartDate, mergedEndDate, user_id, existing.id]
-        );
-
-        const currentMax = overlappingCheck.rows.length > 0 ? parseInt(overlappingCheck.rows[0].max_allocation) : 0;
-        
-        if (currentMax + newAllocation > 160) {
-             return res.status(400).json({ 
-                error: `Merging would exceed 160 monthly hours. 
-                        Merged Hours: ${newAllocation}h. 
-                        Max Other Hours in range: ${currentMax}h. 
-                        Total: ${currentMax + newAllocation}h` 
-            });
-        }
-
-        // Perform Update
-        const updateQuery = `
-            UPDATE user_projects 
-            SET allocation_hours = $1, start_date = $2, end_date = $3, updated_at = NOW()
-            WHERE id = $4
-            RETURNING *
-        `;
-        const updateResult = await pool.query(updateQuery, [newAllocation, mergedStartDate, mergedEndDate, existing.id]);
-        
-        // Sync to Time Entries if PTO
-        await syncAssignmentToTimeEntries(pool, existing.id);
-
-        return res.status(200).json({
-            success: true,
-            message: "Assignment merged successfully",
-            data: updateResult.rows[0]
-        });
-
-    } else {
-        // 2. New Assignment Logic
-        
-        // Check 160h Cap for NEW insert
-        const overlappingCheck = await pool.query(
-          `SELECT COALESCE(MAX(current_day_allocation), 0) as max_allocation
-           FROM (
-             SELECT generate_series($1::date, $2::date, '1 day'::interval) as day
-           ) d
-           CROSS JOIN LATERAL (
-             SELECT SUM(allocation_hours) as current_day_allocation
-             FROM user_projects
-             WHERE user_id = $3
-             AND d.day BETWEEN start_date AND end_date
-           ) up`,
-          [start_date, end_date, user_id]
-        );
-
-        const currentMax = overlappingCheck.rows.length > 0 ? parseFloat(overlappingCheck.rows[0].max_allocation) : 0;
-        if (currentMax + parseFloat(allocation_hours) > 160) {
-          return res.status(400).json({ 
-            error: `Total allocation would exceed 160h on some dates. Max existing: ${currentMax}h. Requested: ${allocation_hours}h` 
-          });
-        }
-        
-        // Insert new assignment
-        const insertQuery = `
-          INSERT INTO user_projects (user_id, project_id, allocation_hours, start_date, end_date)
-          VALUES ($1, $2, $3, $4, $5)
-          RETURNING *
-        `;
-        
-        const result = await pool.query(insertQuery, [user_id, project_id, allocation_hours, start_date, end_date]);
-        
-        // Sync to Time Entries if PTO
-        await syncAssignmentToTimeEntries(pool, result.rows[0].id);
-
-        res.status(201).json({
-          success: true,
-          message: "Assignment created successfully",
-          data: result.rows[0]
-        });
+    const currentMax = overlappingCheck.rows.length > 0 ? parseFloat(overlappingCheck.rows[0].max_allocation) : 0;
+    if (currentMax + parseFloat(allocation_hours) > 744) {
+      return res.status(400).json({ 
+        error: `Total allocation would exceed 744h on some dates. Max existing: ${currentMax}h. Requested: ${allocation_hours}h` 
+      });
     }
+    
+    // Insert new assignment
+    const insertQuery = `
+      INSERT INTO user_projects (user_id, project_id, allocation_hours, base_hours, start_date, end_date, remarks)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `;
+    
+    const result = await pool.query(insertQuery, [user_id, project_id, finalAllocation, finalBaseHours, start_date, end_date, finalRemarks]);
+    
+    // If it's a PTO, sync overlapping projects
+    if (isPto) {
+      await syncPTOHours(pool, user_id, start_date, end_date);
+    }
+    
+    // Sync to Time Entries if PTO
+    await syncAssignmentToTimeEntries(pool, result.rows[0].id);
+
+    return res.status(201).json({
+      success: true,
+      message: "Assignment created successfully",
+      data: result.rows[0],
+      pto_hours_added: res.pto_hours_added || 0
+    });
 
   } catch (err) {
     console.error("Failed to create/merge assignment:", err);
@@ -282,14 +333,46 @@ exports.updateAssignment = async (req, res) => {
     const targetUserId = assignment.user_id;
     const finalStartDate = start_date || assignment.start_date;
     const finalEndDate = end_date || assignment.end_date;
-    const finalAllocation = allocation_hours !== undefined ? parseFloat(allocation_hours) : parseFloat(assignment.allocation_hours);
-
-    if (finalAllocation < 0 || finalAllocation > 160) {
-      return res.status(400).json({ error: "allocation_hours must be between 0 and 160" });
-    }
 
     if (new Date(finalStartDate) > new Date(finalEndDate)) {
       return res.status(400).json({ error: "Start date must be before or equal to end date" });
+    }
+
+    // 0. Check if this is a PTO project assignment (Leave)
+    const projectCheck = await pool.query(
+      "SELECT category, name FROM projects WHERE id = (SELECT project_id FROM user_projects WHERE id = $1)",
+      [id]
+    );
+    const isPto = projectCheck.rows.length > 0 && (projectCheck.rows[0].category === 'PTO' || projectCheck.rows[0].name === 'Leave');
+
+    let finalBaseHours = allocation_hours !== undefined ? parseFloat(allocation_hours) : parseFloat(assignment.base_hours || assignment.allocation_hours);
+    
+    if (finalBaseHours < 0 || finalBaseHours > 744) {
+      return res.status(400).json({ error: "allocation_hours must be between 0 and 744" });
+    }
+
+    let finalAllocation = finalBaseHours;
+    let finalRemarks = null;
+
+    if (!isPto) {
+      // Find PTO hours for this user in the range
+      const ptoCheck = await pool.query(
+        `SELECT COALESCE(SUM(allocation_hours), 0) as pto_hours
+         FROM user_projects up
+         JOIN projects p ON up.project_id = p.id
+         WHERE up.user_id = $1 
+         AND (p.category = 'PTO' OR p.name = 'Leave')
+         AND up.start_date <= $3::DATE AND up.end_date >= $2::DATE
+         AND up.id != $4`,
+        [targetUserId, finalStartDate, finalEndDate, id]
+      );
+      
+      const ptoHoursNum = parseFloat(ptoCheck.rows[0].pto_hours);
+      if (ptoHoursNum > 0) {
+        finalAllocation += ptoHoursNum;
+        finalRemarks = `Includes ${ptoHoursNum}h of PTO during the period`;
+        res.pto_hours_added = ptoHoursNum; // Store in local var for response
+      }
     }
     
     // Check total allocation excluding current assignment
@@ -309,21 +392,28 @@ exports.updateAssignment = async (req, res) => {
     );
 
     const currentMax = parseFloat(overlappingCheck.rows[0].max_allocation);
-    if (currentMax + finalAllocation > 160) {
+    if (currentMax + finalAllocation > 744) {
       return res.status(400).json({ 
-        error: `Total allocation would exceed 160h on some dates. Maximum other: ${currentMax}h. Available: ${160 - currentMax}h` 
+        error: `Total allocation would exceed 744h on some dates. Maximum other: ${currentMax}h. Available: ${744 - currentMax}h` 
       });
     }
     
     // Update assignment
     const updateQuery = `
       UPDATE user_projects 
-      SET allocation_hours = $1, start_date = $2, end_date = $3, updated_at = NOW()
-      WHERE id = $4
+      SET allocation_hours = $1, base_hours = $2, start_date = $3, end_date = $4, remarks = $5, updated_at = NOW()
+      WHERE id = $6
       RETURNING *
     `;
     
-    const result = await pool.query(updateQuery, [finalAllocation, finalStartDate, finalEndDate, id]);
+    const result = await pool.query(updateQuery, [finalAllocation, finalBaseHours, finalStartDate, finalEndDate, finalRemarks, id]);
+    
+    // If it's a PTO or dates changed, sync overlapping projects
+    await syncPTOHours(pool, targetUserId, finalStartDate, finalEndDate);
+    // Also sync the old range if dates changed
+    if (assignment.start_date !== finalStartDate || assignment.end_date !== finalEndDate) {
+      await syncPTOHours(pool, targetUserId, assignment.start_date, assignment.end_date);
+    }
     
     // Sync to Time Entries if PTO
     await syncAssignmentToTimeEntries(pool, id);
@@ -331,7 +421,8 @@ exports.updateAssignment = async (req, res) => {
     res.json({
       success: true,
       message: "Assignment updated successfully",
-      data: result.rows[0]
+      data: result.rows[0],
+      pto_hours_added: res.pto_hours_added || 0
     });
   } catch (err) {
     console.error("Failed to update assignment:", err);
@@ -350,8 +441,14 @@ exports.deleteAssignment = async (req, res) => {
     );
 
     if (result.rows.length > 0) {
+        const deletedAss = result.rows[0];
         // Clear sync'd time entries if it was a PTO
-        await syncAssignmentToTimeEntries(pool, id, result.rows[0]); 
+        await syncAssignmentToTimeEntries(pool, id, deletedAss); 
+        // Sync overlapping projects if this was a PTO
+        const ptoCheck = await pool.query("SELECT category, name FROM projects WHERE id = $1", [deletedAss.project_id]);
+        if (ptoCheck.rows.length > 0 && (ptoCheck.rows[0].category === 'PTO' || ptoCheck.rows[0].name === 'Leave')) {
+            await syncPTOHours(pool, deletedAss.user_id, deletedAss.start_date, deletedAss.end_date);
+        }
     }
     
     if (result.rows.length === 0) {
@@ -426,9 +523,9 @@ exports.savePtoAssignments = async (req, res) => {
             
             // Insert assignment
             await client.query(
-                `INSERT INTO user_projects (user_id, project_id, allocation_hours, start_date, end_date)
-                 VALUES ($1, $2, $3, $4, $4)`,
-                [ass.user_id, leaveProjectId, ass.hours, dateStr]
+                `INSERT INTO user_projects (user_id, project_id, allocation_hours, base_hours, start_date, end_date)
+                 VALUES ($1, $2, $3, $4, $5, $5)`,
+                [ass.user_id, leaveProjectId, ass.hours, ass.hours, dateStr]
             );
 
             // Fetch user info for time entry
@@ -441,6 +538,11 @@ exports.savePtoAssignments = async (req, res) => {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
                 [leaveTaskId, user.name, user.dept, user.email, leaveProjectName, leaveProjectCode, dateStr, ass.hours, 0, 'Auto-synced from PTO spreadsheet']
             );
+        }
+        
+        // Finalize PTO sync for all affected users
+        for (const uid of userIds) {
+            await syncPTOHours(client, uid, startDate, endDate);
         }
 
         await client.query('COMMIT');
@@ -484,11 +586,14 @@ exports.syncTimeEntryToAssignment = async (client, userEmail, date, hours, taskI
         // 4. If hours > 0, insert new assignment
         if (parseFloat(hours) > 0) {
             await client.query(
-                `INSERT INTO user_projects (user_id, project_id, allocation_hours, start_date, end_date)
-                 VALUES ($1, $2, $3, $4, $4)`,
-                [userId, leaveProjectId, hours, date]
+                `INSERT INTO user_projects (user_id, project_id, allocation_hours, base_hours, start_date, end_date)
+                 VALUES ($1, $2, $3, $4, $5, $5)`,
+                [userId, leaveProjectId, hours, hours, date]
             );
         }
+
+        // Sync regular projects
+        await syncPTOHours(client, userId, date, date);
     } catch (err) {
         console.error("Failed to sync time entry to assignment:", err);
         throw err; // Re-throw to trigger rollback in caller
