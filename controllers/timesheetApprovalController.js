@@ -134,8 +134,18 @@ exports.getTimesheetsForApproval = async (req, res) => {
 
     // If Admin, see ALL (or filter by status if needed, but 'pending' is default context often)
     // If Manager (and not Admin), see only direct reports
+    // If Admin, see ALL
+    // If Manager (and not Admin), see hierarchical reports (direct + indirect)
     if (!isAdmin) {
-      query += ` WHERE u.reporting_manager_id = $1`;
+      query += ` WHERE u.id IN (
+        WITH RECURSIVE subordinates AS (
+          SELECT id FROM users WHERE reporting_manager_id = $1
+          UNION ALL
+          SELECT u.id FROM users u 
+          INNER JOIN subordinates s ON s.id = u.reporting_manager_id
+        )
+        SELECT id FROM subordinates
+      )`;
       params.push(requester.id);
     }
 
@@ -365,7 +375,15 @@ exports.getTeamTimesheetHistory = async (req, res) => {
         u.dept as user_dept
        FROM timesheet_approvals ta
        JOIN users u ON ta.user_id = u.id
-       WHERE u.reporting_manager_id = $1
+       WHERE (u.reporting_manager_id = $1 OR u.id IN (
+         WITH RECURSIVE subordinates AS (
+           SELECT id FROM users WHERE reporting_manager_id = $1
+           UNION ALL
+           SELECT u.id FROM users u 
+           INNER JOIN subordinates s ON s.id = u.reporting_manager_id
+         )
+         SELECT id FROM subordinates
+       ))
     `;
 
     const params = [manager.id];
@@ -493,18 +511,33 @@ exports.getTimesheetComplianceReport = async (req, res) => {
     }
 
     // Base query to get relevant users
-    let usersQuery = `SELECT id, name, email, dept, reporting_manager_id FROM users WHERE 1=1`; 
+    let usersQuery;
     const queryParams = [];
     
     // Filter logic:
-    // 1. If not admin, strictly show only direct reports
-    // 2. If admin and scope=team, show only direct reports
+    // 1. If not admin, show hierarchical team (self + all direct/indirect reports)
+    // 2. If admin and scope=team, show hierarchical team
     // 3. Otherwise (admin and no scope=team), show everyone
     if (!isAdmin || scope === 'team') {
-        usersQuery += ` AND reporting_manager_id = $1`;
+        usersQuery = `
+            WITH RECURSIVE subordinates AS (
+                -- Anchor: start with the requester themselves
+                SELECT id, name, email, dept, reporting_manager_id
+                FROM users
+                WHERE id = $1
+                UNION ALL
+                -- Recursive: get reports of subordinates
+                SELECT u.id, u.name, u.email, u.dept, u.reporting_manager_id
+                FROM users u
+                INNER JOIN subordinates s ON s.id = u.reporting_manager_id
+            )
+            SELECT DISTINCT id, name, email, dept, reporting_manager_id FROM subordinates
+            ORDER BY name ASC
+        `;
         queryParams.push(requester.id);
-    } 
-    // If Admin, sees all (no filter added)
+    } else {
+        usersQuery = `SELECT id, name, email, dept, reporting_manager_id FROM users WHERE 1=1 ORDER BY name ASC`;
+    }
 
     const usersResult = await pool.query(usersQuery, queryParams);
     const users = usersResult.rows;
@@ -512,11 +545,6 @@ exports.getTimesheetComplianceReport = async (req, res) => {
     if (users.length === 0) {
         return res.status(200).json([]);
     }
-
-    // Now for each user, fetch their timesheet status AND daily totals for the range
-    // We can do this with a complex join or map over users. 
-    // For performance with large user base, a single efficient query is better, but iteration is safer logic-wise for now.
-    // Let's try a single query approach using the user IDs.
 
     const userIds = users.map(u => u.id);
     
@@ -545,16 +573,17 @@ exports.getTimesheetComplianceReport = async (req, res) => {
     // Aggregation
     const entriesMap = {};
     entriesResult.rows.forEach(r => {
-        // Map back to user ID for consistency with status map
-        // We need to find the user ID corresponding to this email
         const user = users.find(u => u.email === r.user_email);
         if (user) {
-            // Fix: Use local date components or string manipulation to avoid timezone shift
-            const d = new Date(r.entry_date);
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            const dateStr = `${year}-${month}-${day}`;
+            // entry_date is already "YYYY-MM-DD" if we used the type parser in db.js
+            // If not, we normalize it safely here.
+            let dateStr = r.entry_date;
+            if (dateStr instanceof Date) {
+              const y = dateStr.getFullYear();
+              const m = String(dateStr.getMonth() + 1).padStart(2, '0');
+              const d = String(dateStr.getDate()).padStart(2, '0');
+              dateStr = `${y}-${m}-${d}`;
+            }
 
             const k = `${user.id}-${dateStr}`;
             if (!entriesMap[k]) entriesMap[k] = 0;
@@ -563,30 +592,22 @@ exports.getTimesheetComplianceReport = async (req, res) => {
     });
 
     // 3. Assemble Report
+    const [y, m, d_] = startDate.split('-').map(Number);
+    const baseDate = new Date(Date.UTC(y, m - 1, d_));
+
     const report = users.map(u => {
         const s = statusMap[u.id];
         const dailyHours = {};
         let total = 0;
         
         // Loop through requested date range (7 days)
-        const d = new Date(startDate);
         for(let i=0; i<7; i++) {
-            // Need consistent string format for lookup
-            // startDate is YYYY-MM-DD from client
-            // d is created from it (UTC midnight usually if just date string)
-            // But we want to iterate date by date
+            const iterDate = new Date(baseDate);
+            iterDate.setUTCDate(baseDate.getUTCDate() + i);
             
-            // To be safe, construct date string manually from d (which iterates)
-            // If d is created as UTC, getUTCDate works. If local, getDate works.
-            // Let's assume startDate is 'YYYY-MM-DD' key. 
-            // We can just parse startDate parts and increment.
-            
-            // Actually simpler: 
-            const iterDate = new Date(startDate);
-            iterDate.setDate(iterDate.getDate() + i);
-            const iy = iterDate.getFullYear();
-            const im = String(iterDate.getMonth() + 1).padStart(2, '0');
-            const id = String(iterDate.getDate()).padStart(2, '0');
+            const iy = iterDate.getUTCFullYear();
+            const im = String(iterDate.getUTCMonth() + 1).padStart(2, '0');
+            const id = String(iterDate.getUTCDate()).padStart(2, '0');
             const dateStr = `${iy}-${im}-${id}`;
 
             const val = entriesMap[`${u.id}-${dateStr}`] || 0;
@@ -605,7 +626,7 @@ exports.getTimesheetComplianceReport = async (req, res) => {
             submittedAt: s ? s.submitted_at : null,
             rejectionReason: s ? s.rejection_reason : null,
             totalHours: total,
-            daily: dailyHours, // Frontend expects 'daily'
+            daily: dailyHours,
             timesheetId: s ? s.timesheet_id : null
         };
     });
