@@ -3,7 +3,8 @@ const {
   seedClientsFromExcel, 
   seedProjectsFromExcel, 
   seedTasksFromExcel, 
-  seedManagersFromExcel 
+  seedManagersFromExcel,
+  seedPipeSpecificationsFromExcel
 } = require("./seeds");
 const pool = require("./db");
 
@@ -19,6 +20,7 @@ async function runAllSeeds() {
     
     // Finally update rankings/relationships
     await seedManagersFromExcel();
+    await seedPipeSpecificationsFromExcel();
     
     console.log("✅ All seeding completed successfully!");
   } catch (err) {

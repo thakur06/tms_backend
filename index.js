@@ -20,6 +20,7 @@ const { ensureTimesheetApprovalsTable } = require("./validators/timesheetApprova
 const { ensureDepartmentsTable } = require("./validators/departmentSchema");
 const { ensureTicketsTable } = require("./validators/ticketsSchema");
 const { ensureTicketCommentsTable } = require("./validators/ticketCommentsSchema");
+const { ensurePipeSpecificationsTable } = require("./validators/pipeSpecificationsSchema");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -35,6 +36,7 @@ const notificationRoutes = require("./routes/notificationsRoutes");
 const timesheetApprovalRoutes = require("./routes/timesheetApprovalRoutes");
 const userProjectRoutes = require("./routes/userProjectRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
+const pipeSpecificationsRoutes = require("./routes/pipeSpecificationsRoutes");
 
 const numCPUs = os.cpus().length;
 const app = express();
@@ -73,6 +75,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/timesheets", timesheetApprovalRoutes);
 app.use("/api/user-projects", userProjectRoutes);
 app.use("/api/tickets", ticketRoutes);
+app.use("/api/pipe-specifications", pipeSpecificationsRoutes);
 
 const { getCurrentWeekTotalTime } = require("./controllers/reportController");
 const { protect } = require("./middlewares/authMiddleware");
@@ -90,6 +93,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
     ensureDepartmentsTable(),
     ensureClientsTable(),
     ensureProjectsTable(),
+    ensurePipeSpecificationsTable(),
   ]).then(() => {
     // 2️⃣ Stage 2: Level 1 Dependents (referencing Stage 1)
     return Promise.all([
@@ -137,6 +141,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
               ensureDepartmentsTable(),
               ensureClientsTable(),
               ensureProjectsTable(),
+              ensurePipeSpecificationsTable(),
             ]);
 
             // 2️⃣ Stage 2: Level 1 Dependents
