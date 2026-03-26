@@ -21,6 +21,7 @@ const { ensureDepartmentsTable } = require("./validators/departmentSchema");
 const { ensureTicketsTable } = require("./validators/ticketsSchema");
 const { ensureTicketCommentsTable } = require("./validators/ticketCommentsSchema");
 const { ensurePipeSpecificationsTable } = require("./validators/pipeSpecificationsSchema");
+const { ensureSurfaceAreaCalculationsTable } = require("./validators/surfaceAreaCalculationsSchema");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -37,6 +38,7 @@ const timesheetApprovalRoutes = require("./routes/timesheetApprovalRoutes");
 const userProjectRoutes = require("./routes/userProjectRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
 const pipeSpecificationsRoutes = require("./routes/pipeSpecificationsRoutes");
+const surfaceAreaCalculationsRoutes = require("./routes/surfaceAreaCalculationsRoutes");
 
 const numCPUs = os.cpus().length;
 const app = express();
@@ -76,6 +78,7 @@ app.use("/api/timesheets", timesheetApprovalRoutes);
 app.use("/api/user-projects", userProjectRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/pipe-specifications", pipeSpecificationsRoutes);
+app.use("/api/surface-area-calculations", surfaceAreaCalculationsRoutes);
 
 const { getCurrentWeekTotalTime } = require("./controllers/reportController");
 const { protect } = require("./middlewares/authMiddleware");
@@ -94,6 +97,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
     ensureClientsTable(),
     ensureProjectsTable(),
     ensurePipeSpecificationsTable(),
+    ensureSurfaceAreaCalculationsTable(),
   ]).then(() => {
     // 2️⃣ Stage 2: Level 1 Dependents (referencing Stage 1)
     return Promise.all([
@@ -142,6 +146,7 @@ if (cluster.isPrimary && process.env.NODE_ENV === "production") {
               ensureClientsTable(),
               ensureProjectsTable(),
               ensurePipeSpecificationsTable(),
+              ensureSurfaceAreaCalculationsTable(),
             ]);
 
             // 2️⃣ Stage 2: Level 1 Dependents
